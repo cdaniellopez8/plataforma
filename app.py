@@ -156,15 +156,13 @@ def text_to_speech(text):
 # Procesamiento del archivo
 # -------------------------
 if uploaded_file is not None:
-    # Inicializar session state
-    if "bloques_audio" not in st.session_state:
+    # Reiniciar completamente el estado si se carga un archivo nuevo
+    if "uploaded_file_name" not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
         st.session_state.bloques_audio = []
-    if "indice_actual" not in st.session_state:
         st.session_state.indice_actual = 0
-    if "indice_audio_bloque" not in st.session_state:
         st.session_state.indice_audio_bloque = 0
-    if "notebook_cargado" not in st.session_state:
         st.session_state.notebook_cargado = False
+        st.session_state.uploaded_file_name = uploaded_file.name
     
     # Procesar notebook solo una vez
     if not st.session_state.notebook_cargado:
@@ -204,7 +202,28 @@ if uploaded_file is not None:
                     
                     # Para fórmulas, convertir LaTeX a texto natural
                     if tipo == "formula":
-                        contenido_legible = latex_a_texto_hablado(cell_source)
+                        # Primero intentar con GPT para mejor calidad
+                        try:
+                            prompt_formula = f"""
+Convierte esta fórmula matemática a lenguaje hablado natural en español. 
+NO uses letras sueltas. Usa frases completas y naturales.
+Ejemplo: E=mc^2 debe decirse como "E igual a m por c al cuadrado"
+
+Fórmula: {cell_source}
+
+Responde solo con el texto para leer en voz alta:"""
+                            
+                            response_formula = client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt_formula}],
+                                temperature=0.3,
+                                max_tokens=200
+                            )
+                            contenido_legible = response_formula.choices[0].message.content
+                        except:
+                            # Si falla, usar conversión simple
+                            contenido_legible = latex_a_texto_hablado(cell_source)
+                        
                         audio_contenido = text_to_speech(contenido_legible)
                     else:
                         audio_contenido = text_to_speech(cell_source)
@@ -335,61 +354,94 @@ if uploaded_file is not None:
                     st.session_state.indice_audio_bloque = 0
                     st.rerun()
         
-        # JavaScript para manejar hover
+        # JavaScript para manejar hover - MEJORADO
         st.markdown("""
         <script>
+        // Ejecutar inmediatamente cuando se carga
         (function() {
+            let hoversConfigurados = false;
+            
             function initHover() {
-                const hoverAnterior = document.getElementById('hoverAnterior');
-                const hoverSiguiente = document.getElementById('hoverSiguiente');
-                const hoverReiniciar = document.getElementById('hoverReiniciar');
+                // Prevenir configuración duplicada
+                if (hoversConfigurados) return true;
+                
+                // Buscar en el documento principal y en iframes
+                let doc = document;
+                const iframe = window.parent.document.querySelector('iframe');
+                if (iframe && iframe.contentDocument) {
+                    doc = iframe.contentDocument;
+                }
+                
+                const hoverAnterior = doc.getElementById('hoverAnterior') || document.getElementById('hoverAnterior');
+                const hoverSiguiente = doc.getElementById('hoverSiguiente') || document.getElementById('hoverSiguiente');
+                const hoverReiniciar = doc.getElementById('hoverReiniciar') || document.getElementById('hoverReiniciar');
                 
                 if (!hoverAnterior || !hoverSiguiente || !hoverReiniciar) {
+                    console.log('Audios no encontrados aún...');
                     return false;
                 }
                 
-                const allButtons = document.querySelectorAll('button');
+                // Buscar botones tanto en el documento como en el parent
+                const allButtons = Array.from(doc.querySelectorAll('button')).concat(
+                    Array.from(document.querySelectorAll('button'))
+                );
+                
                 let btnAnterior, btnSiguiente, btnReiniciar;
                 
                 allButtons.forEach(btn => {
                     const text = btn.textContent || btn.innerText || '';
-                    if (text.includes('Anterior')) btnAnterior = btn;
-                    else if (text.includes('Siguiente')) btnSiguiente = btn;
-                    else if (text.includes('Reiniciar')) btnReiniciar = btn;
+                    if (text.includes('Anterior') && !btnAnterior) btnAnterior = btn;
+                    else if (text.includes('Siguiente') && !btnSiguiente) btnSiguiente = btn;
+                    else if (text.includes('Reiniciar') && !btnReiniciar) btnReiniciar = btn;
                 });
                 
-                if (btnAnterior) {
-                    btnAnterior.addEventListener('mouseenter', function() {
-                        hoverAnterior.currentTime = 0;
-                        hoverAnterior.play().catch(e => console.log('Error:', e));
-                    });
+                console.log('Botones encontrados:', {
+                    anterior: !!btnAnterior,
+                    siguiente: !!btnSiguiente,
+                    reiniciar: !!btnReiniciar
+                });
+                
+                if (!btnAnterior || !btnSiguiente || !btnReiniciar) {
+                    return false;
                 }
                 
-                if (btnSiguiente) {
-                    btnSiguiente.addEventListener('mouseenter', function() {
-                        hoverSiguiente.currentTime = 0;
-                        hoverSiguiente.play().catch(e => console.log('Error:', e));
-                    });
-                }
+                // Configurar eventos
+                btnAnterior.onmouseenter = function() {
+                    console.log('Hover Anterior');
+                    hoverAnterior.currentTime = 0;
+                    hoverAnterior.play().catch(e => console.log('Error anterior:', e));
+                };
                 
-                if (btnReiniciar) {
-                    btnReiniciar.addEventListener('mouseenter', function() {
-                        hoverReiniciar.currentTime = 0;
-                        hoverReiniciar.play().catch(e => console.log('Error:', e));
-                    });
-                }
+                btnSiguiente.onmouseenter = function() {
+                    console.log('Hover Siguiente');
+                    hoverSiguiente.currentTime = 0;
+                    hoverSiguiente.play().catch(e => console.log('Error siguiente:', e));
+                };
                 
+                btnReiniciar.onmouseenter = function() {
+                    console.log('Hover Reiniciar');
+                    hoverReiniciar.currentTime = 0;
+                    hoverReiniciar.play().catch(e => console.log('Error reiniciar:', e));
+                };
+                
+                hoversConfigurados = true;
+                console.log('✅ Hovers configurados exitosamente');
                 return true;
             }
             
+            // Intentar configurar múltiples veces
             let attempts = 0;
-            const maxAttempts = 15;
+            const maxAttempts = 20;
             const interval = setInterval(function() {
                 attempts++;
+                console.log('Intento', attempts, 'de configurar hovers...');
                 if (initHover() || attempts >= maxAttempts) {
                     clearInterval(interval);
+                    if (attempts >= maxAttempts) {
+                        console.log('❌ No se pudieron configurar hovers después de', attempts, 'intentos');
+                    }
                 }
-            }, 200);
+            }, 300);
         })();
         </script>
         """, unsafe_allow_html=True)
