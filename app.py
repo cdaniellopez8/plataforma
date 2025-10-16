@@ -116,9 +116,9 @@ Instrucciones:
 - Para integrales usa "integral de"
 
 Ejemplos:
-- $E=mc^2$ → "E igual a m por c al cuadrado"
-- $x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$ → "x igual a menos b más menos raíz cuadrada de b al cuadrado menos cuatro a c, todo dividido por dos a"
-- $\int_0^\infty e^{-x} dx$ → "integral desde cero hasta infinito de e elevado a menos x, de equis"
+- E igual mc al cuadrado se lee como "E igual a m por c al cuadrado"
+- La fórmula cuadrática se lee como "x igual a menos b más menos raíz cuadrada de b al cuadrado menos cuatro a c, todo dividido por dos a"
+- Una integral se lee como "integral desde cero hasta infinito de e elevado a menos x, de equis"
 
 Fórmula a convertir:
 {texto}
