@@ -102,36 +102,52 @@ Contenido: {texto[:1000]}
 def leer_formula_correctamente(texto):
     """Convierte fórmulas LaTeX a texto legible para TTS"""
     prompt = f"""
-Eres un asistente que convierte fórmulas matemáticas en LaTeX a lenguaje natural en español para personas ciegas.
+Eres un asistente experto en convertir fórmulas matemáticas escritas en LaTeX a lenguaje natural en español para personas ciegas.
 
-Instrucciones:
-- Lee la fórmula de forma natural, como si la estuvieras explicando verbalmente
-- NO digas letras sueltas como "e igual m c dos"
-- Di nombres completos: "E igual a m por c al cuadrado"
-- Para exponentes usa "al cuadrado", "al cubo", "elevado a la potencia"
-- Para fracciones usa "dividido por" o "sobre"
-- Para raíces usa "raíz cuadrada de", "raíz cúbica de"
-- Para símbolos griegos usa su nombre: "alpha", "beta", "delta", "sigma"
-- Para sumas usa "suma de"
-- Para integrales usa "integral de"
+REGLAS CRÍTICAS:
+- NUNCA digas letras sueltas separadas como "e igual m c dos"
+- SIEMPRE usa lenguaje natural completo: "energía igual a masa por velocidad de la luz al cuadrado"
+- Para variables sueltas (E, m, c, x, y) di su nombre completo si es conocido, o "la variable [letra]"
+- Para números con exponentes: "dos" se dice "dos", "2" con exponente se dice "al cuadrado", "al cubo", etc.
+- Para fracciones: usa "dividido entre" o "sobre"
+- Para raíces: "raíz cuadrada de", "raíz cúbica de"
+- Para símbolos griegos: di su nombre completo en español (alfa, beta, delta, sigma, pi, etc.)
+- Para sumas: "sumatoria de"
+- Para integrales: "integral de"
+- Para multiplicaciones implícitas (como mc): di "m por c" o "masa por velocidad de la luz"
 
-Ejemplos:
-- E igual mc al cuadrado se lee como "E igual a m por c al cuadrado"
-- La fórmula cuadrática se lee como "x igual a menos b más menos raíz cuadrada de b al cuadrado menos cuatro a c, todo dividido por dos a"
-- Una integral se lee como "integral desde cero hasta infinito de e elevado a menos x, de equis"
+EJEMPLOS CORRECTOS:
+- $E=mc^2$ debe leerse: "energía igual a masa por velocidad de la luz al cuadrado"
+- $a^2 + b^2 = c^2$ debe leerse: "a al cuadrado más b al cuadrado igual a c al cuadrado"
+- $F=ma$ debe leerse: "fuerza igual a masa por aceleración"
 
-Fórmula a convertir:
+IMPORTANTE: Si no conoces el significado de una variable, usa frases como:
+- "la variable E igual a la variable m por la variable c al cuadrado"
+
+Ahora convierte esta fórmula a lenguaje natural muy claro y fluido:
 {texto}
 
-Responde SOLO con la lectura en lenguaje natural, sin explicaciones adicionales.
+Responde SOLO con la lectura en español natural, sin explicar qué hiciste.
 """
     
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
+        temperature=0.2,
+        max_tokens=300
     )
-    return response.choices[0].message.content
+    lectura = response.choices[0].message.content
+    
+    # Post-procesamiento adicional para asegurar calidad
+    # Reemplazar abreviaciones comunes que el TTS podría leer mal
+    lectura = lectura.replace(" E ", " energía ")
+    lectura = lectura.replace(" m ", " masa ")
+    lectura = lectura.replace(" c ", " velocidad de la luz ")
+    lectura = lectura.replace(" F ", " fuerza ")
+    lectura = lectura.replace(" a ", " aceleración ")
+    lectura = lectura.replace("=", " igual a ")
+    
+    return lectura
 
 # -------------------------
 # Conversión texto a voz
@@ -383,4 +399,3 @@ if uploaded_file is not None:
         })();
         </script>
         """, unsafe_allow_html=True)
-        
