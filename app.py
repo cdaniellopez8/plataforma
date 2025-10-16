@@ -109,26 +109,44 @@ elif rpubs_link:
 # =====================
 
 if chunks:
-    st.session_state.setdefault("indice", 0)
+    # Reiniciar índice si cambia el contenido
+    if "ultimo_total" not in st.session_state or st.session_state["ultimo_total"] != len(chunks):
+        st.session_state["indice"] = 0
+        st.session_state["ultimo_total"] = len(chunks)
+
     idx = st.session_state["indice"]
 
-    st.markdown(f"### 🔹 Fragmento {idx + 1} de {len(chunks)}")
-    st.text_area("Texto actual:", chunks[idx], height=200)
+    # Controlar que el índice no se salga del rango
+    if idx < 0:
+        st.session_state["indice"] = 0
+        idx = 0
+    elif idx >= len(chunks):
+        st.session_state["indice"] = len(chunks) - 1
+        idx = len(chunks) - 1
 
-    audio_path = texto_a_audio(chunks[idx])
+    st.markdown(f"### 🔹 Fragmento {idx + 1} de {len(chunks)}")
+
+    # Mostrar texto actual
+    texto_actual = chunks[idx] if len(chunks) > 0 else "(sin texto)"
+    st.text_area("Texto actual:", texto_actual, height=200)
+
+    # Generar audio
+    audio_path = texto_a_audio(texto_actual)
     st.audio(audio_path)
 
+    # Controles accesibles
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("⬅️ Anterior"):
-            if idx > 0:
+            if st.session_state["indice"] > 0:
                 st.session_state["indice"] -= 1
                 st.rerun()
     with col2:
-        st.button("⏸️ Pausar / Reanudar")  # visual, no funcional en Streamlit nativo
+        st.button("⏸️ Pausar / Reanudar")  # placeholder visual
     with col3:
         if st.button("➡️ Siguiente"):
-            if idx < len(chunks) - 1:
+            if st.session_state["indice"] < len(chunks) - 1:
                 st.session_state["indice"] += 1
                 st.rerun()
+
 
