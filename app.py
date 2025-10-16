@@ -12,16 +12,17 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 
-# Instrucciones habladas y en texto
+# Instrucciones habladas y visibles
 instrucciones = """
 Bienvenido al lector inclusivo. 
 Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
-1. Sube un archivo con extensión .ipynb.
-2. Usa los botones para moverte entre bloques de contenido:
+
+1. Sube un archivo con extensión `.ipynb`.
+2. Usa los botones para moverte entre bloques:
    - 'Anterior bloque' para retroceder.
    - 'Reproducir / Pausar' para escuchar el bloque actual.
    - 'Siguiente bloque' para avanzar.
-3. Si el bloque contiene una fórmula o una tabla, primero escucharás una breve descripción.
+3. Si el bloque contiene una **fórmula o tabla**, primero escucharás una descripción sencilla antes de leer el contenido.
 """
 st.markdown(instrucciones)
 
@@ -50,7 +51,7 @@ def describir_contenido(tipo, texto):
         prompt = f"""
         Eres un asistente que apoya a personas ciegas leyendo notebooks.  
         Vas a generar una frase introductoria breve con este formato:
-        "A continuación verás una fórmula. Esta trata sobre [explicación corta del tema de la fórmula, sin decir qué es ni usar símbolos]."
+        "A continuación verás una fórmula. Esta trata sobre [una breve descripción general sin símbolos ni fórmulas]."
         Contenido:
         {texto[:800]}
         """
@@ -103,10 +104,10 @@ if uploaded_file:
             if texto:
                 bloques.append(("codigo", texto))
 
-    # Inicializar sesión
-    if "index" not in st.session_state:
+    # Si es un nuevo archivo, reiniciar el índice
+    if "ultimo_archivo" not in st.session_state or st.session_state.ultimo_archivo != uploaded_file.name:
         st.session_state.index = 0
-        st.session_state.paused = False
+        st.session_state.ultimo_archivo = uploaded_file.name
 
     # Control de navegación
     def siguiente():
@@ -117,18 +118,12 @@ if uploaded_file:
         if st.session_state.index > 0:
             st.session_state.index -= 1
 
-    def reproducir():
-        st.session_state.paused = False
-
-    def pausar():
-        st.session_state.paused = True
-
     tipo, texto = bloques[st.session_state.index]
     texto = limpiar_texto(texto)
 
     st.markdown(f"### 📘 Bloque {st.session_state.index + 1} de {len(bloques)}")
 
-    # Mostrar descripción y audio
+    # Mostrar descripción y audio según tipo
     if tipo in ["formula", "tabla"]:
         descripcion = describir_contenido(tipo, texto)
         st.write(descripcion)
@@ -142,14 +137,14 @@ if uploaded_file:
         st.audio(text_to_speech(texto), format="audio/mp3")
 
     # -------------------------
-    # Botones de control accesibles
+    # Botones de control
     # -------------------------
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.button("⏮️ Anterior", on_click=anterior, use_container_width=True)
     with col2:
-        st.button("▶️ Reproducir", on_click=reproducir, use_container_width=True)
-    with col3:
-        st.button("⏸️ Pausar", on_click=pausar, use_container_width=True)
-    with col4:
         st.button("⏭️ Siguiente", on_click=siguiente, use_container_width=True)
+    with col3:
+        st.download_button("🔊 Descargar audio actual", text_to_speech(texto), file_name=f"bloque_{st.session_state.index+1}.mp3")
+
