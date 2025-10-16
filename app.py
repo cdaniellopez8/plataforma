@@ -89,13 +89,15 @@ if "index" not in st.session_state:
     st.session_state.index = 0
 if "audio_cache" not in st.session_state:
     st.session_state.audio_cache = {}
+if "playing" not in st.session_state:
+    st.session_state.playing = True
 
 # --- Generar audio único por ID ---
 def get_audio_for_chunk(idx):
     if idx not in st.session_state.audio_cache:
         texto = st.session_state.chunks[idx]['texto_completo']
         audio_b64 = text_to_audio_base64(texto)
-        st.session_state.audio_cache[idx] = f"data:audio/mp3;base64,{audio_b64}"
+        st.session_state.audio_cache[idx] = audio_b64
     return st.session_state.audio_cache[idx]
 
 # --- Generar audios de hover (solo una vez) ---
@@ -120,6 +122,7 @@ if archivo:
         st.session_state.chunks = []
         st.session_state.audio_cache = {}
         st.session_state.file_key = file_key
+        st.session_state.index = 0
     
     if not st.session_state.chunks:
         st.session_state.chunks = procesar_notebook(archivo)
@@ -129,29 +132,12 @@ if archivo:
     total = len(st.session_state.chunks)
 
     st.markdown(f"### Fragmento {current_idx + 1} de {total}")
-    st.text_area("Texto actual:", st.session_state.chunks[current_idx]['texto_visual'], height=200)
+    st.text_area("Texto actual:", st.session_state.chunks[current_idx]['texto_visual'], height=200, key=f"textarea_{current_idx}")
 
     # --- Obtener audio del fragmento actual ---
-    audio_src = get_audio_for_chunk(current_idx)
+    audio_b64 = get_audio_for_chunk(current_idx)
     hover_audios = get_hover_audios()
     
-    # ID único para el audio basado en el índice
-    audio_id = f"audioMain_{current_idx}"
-    
-    # --- Reproduce el audio principal ---
-    st.markdown(f"""
-    <audio id="{audio_id}" autoplay controls style="width: 100%; margin-bottom: 20px;">
-        <source src="{audio_src}" type="audio/mp3">
-    </audio>
-    """, unsafe_allow_html=True)
-
-    # --- Audios hover (ocultos) ---
-    st.markdown(f"""
-    <audio id="hoverPrev" preload="auto"></audio>
-    <audio id="hoverPlay" preload="auto"></audio>
-    <audio id="hoverNext" preload="auto"></audio>
-    """, unsafe_allow_html=True)
-
     # --- Controles accesibles ---
     col1, col2, col3 = st.columns(3)
 
@@ -159,78 +145,83 @@ if archivo:
         if st.button("⏮️ Anterior", use_container_width=True, key=f"btn_prev_{current_idx}"):
             if st.session_state.index > 0:
                 st.session_state.index -= 1
+                st.session_state.playing = True
                 st.rerun()
 
     with col2:
-        st.button("⏯️ Reproducir/Pausar", use_container_width=True, key=f"btn_play_{current_idx}")
+        if st.button("⏯️ Reproducir/Pausar", use_container_width=True, key=f"btn_play_{current_idx}"):
+            st.session_state.playing = not st.session_state.playing
+            st.rerun()
 
     with col3:
         if st.button("⏭️ Siguiente", use_container_width=True, key=f"btn_next_{current_idx}"):
             if st.session_state.index < total - 1:
                 st.session_state.index += 1
+                st.session_state.playing = True
                 st.rerun()
 
-    # --- JavaScript mejorado para controlar audio y hover ---
+    # --- HTML con audio y JavaScript integrado ---
+    autoplay = "autoplay" if st.session_state.playing else ""
+    
     st.markdown(f"""
+    <div id="audio-container">
+        <audio id="mainAudio" {autoplay} controls style="width: 100%; margin: 20px 0;">
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+        
+        <audio id="hoverPrev" preload="auto">
+            <source src="data:audio/mp3;base64,{hover_audios['prev']}" type="audio/mp3">
+        </audio>
+        <audio id="hoverPlay" preload="auto">
+            <source src="data:audio/mp3;base64,{hover_audios['play']}" type="audio/mp3">
+        </audio>
+        <audio id="hoverNext" preload="auto">
+            <source src="data:audio/mp3;base64,{hover_audios['next']}" type="audio/mp3">
+        </audio>
+    </div>
+    
     <script>
-    (function() {{
-        // Cargar audios hover
-        const hoverPrev = document.getElementById('hoverPrev');
-        const hoverPlay = document.getElementById('hoverPlay');
-        const hoverNext = document.getElementById('hoverNext');
-        
-        hoverPrev.src = "data:audio/mp3;base64,{hover_audios['prev']}";
-        hoverPlay.src = "data:audio/mp3;base64,{hover_audios['play']}";
-        hoverNext.src = "data:audio/mp3;base64,{hover_audios['next']}";
-        
-        // Función para encontrar el audio principal
-        function getMainAudio() {{
-            return document.getElementById('{audio_id}');
-        }}
-        
-        // Función para encontrar botones
-        function setupButtons() {{
-            const buttons = window.parent.document.querySelectorAll('button[kind="secondary"]');
+        // Función para configurar eventos hover
+        function setupHoverEvents() {{
+            const parentDoc = window.parent.document;
+            const buttons = parentDoc.querySelectorAll('button[data-testid="baseButton-secondary"]');
             
-            buttons.forEach((btn, idx) => {{
-                const text = btn.textContent || btn.innerText;
+            const hoverPrev = document.getElementById('hoverPrev');
+            const hoverPlay = document.getElementById('hoverPlay');
+            const hoverNext = document.getElementById('hoverNext');
+            
+            buttons.forEach((btn) => {{
+                const text = btn.textContent;
                 
-                if (text.includes('Anterior')) {{
-                    btn.onmouseenter = () => {{
+                // Remover eventos previos
+                btn.onmouseenter = null;
+                
+                if (text.includes('Anterior') && hoverPrev) {{
+                    btn.onmouseenter = function() {{
                         hoverPrev.currentTime = 0;
-                        hoverPrev.play().catch(e => console.log('Audio hover bloqueado'));
+                        hoverPrev.play().catch(e => {{}});
                     }};
-                }}
-                else if (text.includes('Reproducir') || text.includes('Pausar')) {{
-                    btn.onclick = (e) => {{
-                        const audio = getMainAudio();
-                        if (audio) {{
-                            if (audio.paused) {{
-                                audio.play();
-                            }} else {{
-                                audio.pause();
-                            }}
-                        }}
-                    }};
-                    btn.onmouseenter = () => {{
+                }} 
+                else if (text.includes('Reproducir') && hoverPlay) {{
+                    btn.onmouseenter = function() {{
                         hoverPlay.currentTime = 0;
-                        hoverPlay.play().catch(e => console.log('Audio hover bloqueado'));
+                        hoverPlay.play().catch(e => {{}});
                     }};
-                }}
-                else if (text.includes('Siguiente')) {{
-                    btn.onmouseenter = () => {{
+                }} 
+                else if (text.includes('Siguiente') && hoverNext) {{
+                    btn.onmouseenter = function() {{
                         hoverNext.currentTime = 0;
-                        hoverNext.play().catch(e => console.log('Audio hover bloqueado'));
+                        hoverNext.play().catch(e => {{}});
                     }};
                 }}
             }});
         }}
         
-        // Ejecutar con retry
-        setTimeout(setupButtons, 100);
-        setTimeout(setupButtons, 500);
-        setTimeout(setupButtons, 1000);
-    }})();
+        // Intentar configurar múltiples veces
+        setTimeout(setupHoverEvents, 100);
+        setTimeout(setupHoverEvents, 300);
+        setTimeout(setupHoverEvents, 600);
+        setTimeout(setupHoverEvents, 1000);
     </script>
     """, unsafe_allow_html=True)
 
