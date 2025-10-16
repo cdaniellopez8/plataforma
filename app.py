@@ -10,7 +10,7 @@ st.set_page_config(page_title="Lector Inclusivo de Notebook", layout="centered")
 # --- Función para convertir texto a audio (mp3 en base64) ---
 def text_to_audio_base64(text, lang="es"):
     try:
-        tts = gTTS(text=text, lang=lang, tld="com.co")  # Español latino (México)
+        tts = gTTS(text=text, lang=lang, tld="com.mx")  # Español latino (México)
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
@@ -114,6 +114,13 @@ archivo = st.file_uploader("Por favor, carga tu archivo .ipynb", type=["ipynb"])
 
 # --- Procesamiento del archivo ---
 if archivo:
+    # Resetear chunks si se sube un nuevo archivo
+    file_key = f"{archivo.name}_{archivo.size}"
+    if "file_key" not in st.session_state or st.session_state.file_key != file_key:
+        st.session_state.chunks = []
+        st.session_state.audio_cache = {}
+        st.session_state.file_key = file_key
+    
     if not st.session_state.chunks:
         st.session_state.chunks = procesar_notebook(archivo)
         st.session_state.index = 0
@@ -230,4 +237,3 @@ if archivo:
 else:
     st.info("Por favor, sube un archivo .ipynb para comenzar.")
     st.markdown("📢 Este lector te guiará con audio paso a paso. Detecta automáticamente fórmulas, tablas y código extenso.")
-
