@@ -319,7 +319,11 @@ if uploaded_file is not None:
                     st.session_state.indice_audio_bloque = 0
                     st.rerun()
                 else:
-                    st.info("✅ Has llegado al final del notebook")
+                    # Llegamos al final - generar y reproducir audio de despedida
+                    texto_final = "Has llegado al final del documento"
+                    audio_final = text_to_speech(texto_final)
+                    st.info("✅ " + texto_final)
+                    st.audio(audio_final, format="audio/mp3", autoplay=True)
         
         # JavaScript para manejar hover
         st.markdown("""
