@@ -2,26 +2,28 @@ import streamlit as st
 import json
 from gtts import gTTS
 import io
-import openai
+from openai import OpenAI
+
+
+client = OpenAI()
 
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-def describe_chunk(cell_type, text):
-    """Genera una descripción breve con ayuda de un LLM."""
+def describe_chunk(cell_type, cell_source):
     prompt = f"""
-    Eres un asistente de accesibilidad para personas ciegas.
-    Resume brevemente lo que contiene la siguiente celda de un notebook de Python.
-    Si es código, explica qué hace; si es texto, indica de qué trata;
-    si es una tabla o gráfico, descríbelo de manera general.
-    Celda tipo: {cell_type}
+    Resume brevemente qué se hace o se muestra en el siguiente bloque de un notebook Jupyter.
+    Indica si es texto, código o una tabla y describe lo esencial de lo que viene.
+    ---
+    Tipo de celda: {cell_type}
     Contenido:
-    {text[:2000]}
+    {cell_source[:1000]}
     """
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
     )
-    return response.choices[0].message.content.strip()
+    return response.choices[0].message.content
 
 
 def tts_from_text(text, lang="es"):
@@ -62,4 +64,5 @@ if uploaded_file is not None:
             st.audio(audio, format="audio/mp3")
 
         # Mostrar vista previa textual
+
         st.code(cell_source[:500] + ("..." if len(cell_source) > 500 else ""), language="python" if cell_type=="code" else None)
