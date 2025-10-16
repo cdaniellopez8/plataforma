@@ -180,6 +180,8 @@ if uploaded_file is not None:
                 bloques.append(bloque)
         
         st.session_state.bloques_audio = bloques
+        st.session_state.indice_actual = 0  # Iniciar desde el primer bloque
+        st.session_state.indice_audio_bloque = 0  # Iniciar desde el primer audio
         st.session_state.notebook_cargado = True
         st.success(f"✅ Notebook procesado: {len(bloques)} bloques encontrados")
     
@@ -256,7 +258,8 @@ if uploaded_file is not None:
                     st.rerun()
         
         with col2:
-            if st.button("🔄 Reiniciar", use_container_width=True, key="btn_reiniciar"):
+            # Usar un key único para forzar el rerun
+            if st.button("🔄 Reiniciar", use_container_width=True, key=f"btn_reiniciar_{st.session_state.indice_actual}_{st.session_state.indice_audio_bloque}"):
                 st.session_state.indice_audio_bloque = 0  # Reiniciar al primer audio del bloque actual
                 st.rerun()
         
