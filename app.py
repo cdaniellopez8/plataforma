@@ -97,57 +97,49 @@ Contenido: {texto[:1000]}
         return response.choices[0].message.content
 
 # -------------------------
-# Leer fórmulas correctamente
+# Convertir LaTeX a texto hablado
 # -------------------------
-def leer_formula_correctamente(texto):
-    """Convierte fórmulas LaTeX a texto legible para TTS"""
-    prompt = f"""
-Eres un asistente experto en convertir fórmulas matemáticas escritas en LaTeX a lenguaje natural en español para personas ciegas.
-
-REGLAS CRÍTICAS:
-- NUNCA digas letras sueltas separadas como "e igual m c dos"
-- SIEMPRE usa lenguaje natural completo: "energía igual a masa por velocidad de la luz al cuadrado"
-- Para variables sueltas (E, m, c, x, y) di su nombre completo si es conocido, o "la variable [letra]"
-- Para números con exponentes: "dos" se dice "dos", "2" con exponente se dice "al cuadrado", "al cubo", etc.
-- Para fracciones: usa "dividido entre" o "sobre"
-- Para raíces: "raíz cuadrada de", "raíz cúbica de"
-- Para símbolos griegos: di su nombre completo en español (alfa, beta, delta, sigma, pi, etc.)
-- Para sumas: "sumatoria de"
-- Para integrales: "integral de"
-- Para multiplicaciones implícitas (como mc): di "m por c" o "masa por velocidad de la luz"
-
-EJEMPLOS CORRECTOS:
-- $E=mc^2$ debe leerse: "energía igual a masa por velocidad de la luz al cuadrado"
-- $a^2 + b^2 = c^2$ debe leerse: "a al cuadrado más b al cuadrado igual a c al cuadrado"
-- $F=ma$ debe leerse: "fuerza igual a masa por aceleración"
-
-IMPORTANTE: Si no conoces el significado de una variable, usa frases como:
-- "la variable E igual a la variable m por la variable c al cuadrado"
-
-Ahora convierte esta fórmula a lenguaje natural muy claro y fluido:
-{texto}
-
-Responde SOLO con la lectura en español natural, sin explicar qué hiciste.
-"""
+def latex_a_texto_hablado(formula):
+    """Convierte LaTeX simple a texto natural para TTS"""
+    # Remover delimitadores de fórmula
+    texto = formula.replace('$', '').replace('\\(', '').replace('\\)', '').replace('\\[', '').replace('\\]', '')
     
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=300
-    )
-    lectura = response.choices[0].message.content
+    # Reemplazos básicos de LaTeX a texto
+    reemplazos = {
+        '^2': ' al cuadrado',
+        '^3': ' al cubo',
+        '^{2}': ' al cuadrado',
+        '^{3}': ' al cubo',
+        '\\times': ' por',
+        '\\cdot': ' por',
+        '\\frac': ' fracción',
+        '\\sqrt': ' raíz cuadrada de',
+        '\\alpha': ' alfa',
+        '\\beta': ' beta',
+        '\\gamma': ' gamma',
+        '\\delta': ' delta',
+        '\\pi': ' pi',
+        '\\theta': ' theta',
+        '\\sum': ' sumatoria',
+        '\\int': ' integral',
+        '\\infty': ' infinito',
+        '\\pm': ' más menos',
+        '\\leq': ' menor o igual',
+        '\\geq': ' mayor o igual',
+        '=': ' igual a ',
+        '+': ' más ',
+        '-': ' menos ',
+        '*': ' por ',
+    }
     
-    # Post-procesamiento adicional para asegurar calidad
-    # Reemplazar abreviaciones comunes que el TTS podría leer mal
-    lectura = lectura.replace(" E ", " energía ")
-    lectura = lectura.replace(" m ", " masa ")
-    lectura = lectura.replace(" c ", " velocidad de la luz ")
-    lectura = lectura.replace(" F ", " fuerza ")
-    lectura = lectura.replace(" a ", " aceleración ")
-    lectura = lectura.replace("=", " igual a ")
+    for latex, natural in reemplazos.items():
+        texto = texto.replace(latex, natural)
     
-    return lectura
+    # Limpiar caracteres especiales restantes
+    texto = re.sub(r'[{}\\]', ' ', texto)
+    texto = re.sub(r'\s+', ' ', texto)
+    
+    return texto.strip()
 
 # -------------------------
 # Conversión texto a voz
@@ -164,11 +156,14 @@ def text_to_speech(text):
 # Procesamiento del archivo
 # -------------------------
 if uploaded_file is not None:
-    # Inicializar variables de sesión para navegación
+    # Inicializar session state
     if "bloques_audio" not in st.session_state:
         st.session_state.bloques_audio = []
+    if "indice_actual" not in st.session_state:
         st.session_state.indice_actual = 0
+    if "indice_audio_bloque" not in st.session_state:
         st.session_state.indice_audio_bloque = 0
+    if "notebook_cargado" not in st.session_state:
         st.session_state.notebook_cargado = False
     
     # Procesar notebook solo una vez
@@ -207,9 +202,9 @@ if uploaded_file is not None:
                     explicacion = describir_contenido(tipo, cell_source)
                     audio_explicacion = text_to_speech(explicacion)
                     
-                    # Para fórmulas, convertir a lenguaje natural antes de generar audio
+                    # Para fórmulas, convertir LaTeX a texto natural
                     if tipo == "formula":
-                        contenido_legible = leer_formula_correctamente(cell_source)
+                        contenido_legible = latex_a_texto_hablado(cell_source)
                         audio_contenido = text_to_speech(contenido_legible)
                     else:
                         audio_contenido = text_to_speech(cell_source)
@@ -240,25 +235,26 @@ if uploaded_file is not None:
                 bloques.append(bloque)
         
         st.session_state.bloques_audio = bloques
-        st.session_state.indice_actual = 0  # Iniciar desde el primer bloque
-        st.session_state.indice_audio_bloque = 0  # Iniciar desde el primer audio
+        st.session_state.indice_actual = 0
+        st.session_state.indice_audio_bloque = 0
         st.session_state.notebook_cargado = True
         st.success(f"✅ Notebook procesado: {len(bloques)} bloques encontrados")
     
     # Mostrar bloque actual
-    if st.session_state.bloques_audio:
-        # Inicializar índice de audio dentro del bloque si no existe
-        if "indice_audio_bloque" not in st.session_state:
-            st.session_state.indice_audio_bloque = 0
-        
+    if st.session_state.bloques_audio and len(st.session_state.bloques_audio) > 0:
         indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
+        
+        # Validar índice
+        if indice >= total_bloques:
+            st.session_state.indice_actual = 0
+            indice = 0
         
         bloque_actual = st.session_state.bloques_audio[indice]
         total_audios_bloque = len(bloque_actual["audios"])
         indice_audio = st.session_state.indice_audio_bloque
         
-        # Asegurar que el índice de audio esté dentro de rango
+        # Validar índice de audio
         if indice_audio >= total_audios_bloque:
             st.session_state.indice_audio_bloque = 0
             indice_audio = 0
@@ -290,7 +286,6 @@ if uploaded_file is not None:
             st.session_state.hover_audios_generados = True
         
         # Insertar audios hover ocultos
-        import base64
         audio_anterior_b64 = base64.b64encode(st.session_state.audio_hover_anterior).decode()
         audio_siguiente_b64 = base64.b64encode(st.session_state.audio_hover_siguiente).decode()
         audio_reiniciar_b64 = base64.b64encode(st.session_state.audio_hover_reiniciar).decode()
@@ -314,32 +309,31 @@ if uploaded_file is not None:
             if st.button("⏮️ Anterior", use_container_width=True, key="btn_anterior"):
                 if st.session_state.indice_actual > 0:
                     st.session_state.indice_actual -= 1
-                    st.session_state.indice_audio_bloque = 0  # Reiniciar al primer audio del bloque anterior
+                    st.session_state.indice_audio_bloque = 0
                     st.rerun()
         
         with col2:
-            # Usar un key único para forzar el rerun
-            if st.button("🔄 Reiniciar", use_container_width=True, key=f"btn_reiniciar_{st.session_state.indice_actual}_{st.session_state.indice_audio_bloque}"):
-                st.session_state.indice_audio_bloque = 0  # Reiniciar al primer audio del bloque actual
+            if st.button("🔄 Reiniciar", use_container_width=True, key=f"btn_reiniciar_{indice}_{indice_audio}"):
+                st.session_state.indice_audio_bloque = 0
                 st.rerun()
         
         with col3:
             if st.button("⏭️ Siguiente", use_container_width=True, key="btn_siguiente"):
-                # Si hay más audios en el bloque actual, avanzar al siguiente audio
+                # Si hay más audios en el bloque actual
                 if st.session_state.indice_audio_bloque < total_audios_bloque - 1:
                     st.session_state.indice_audio_bloque += 1
                     st.rerun()
-                # Si no, avanzar al siguiente bloque
-                elif st.session_state.indice_actual < total_bloques - 1:
-                    st.session_state.indice_actual += 1
-                    st.session_state.indice_audio_bloque = 0
-                    st.rerun()
-                else:
-                    # Llegamos al final - generar y reproducir audio de despedida
+                # Si es el último audio del último bloque
+                elif st.session_state.indice_actual >= total_bloques - 1:
                     texto_final = "Has llegado al final del documento"
                     audio_final = text_to_speech(texto_final)
                     st.info("✅ " + texto_final)
                     st.audio(audio_final, format="audio/mp3", autoplay=True)
+                # Avanzar al siguiente bloque
+                else:
+                    st.session_state.indice_actual += 1
+                    st.session_state.indice_audio_bloque = 0
+                    st.rerun()
         
         # JavaScript para manejar hover
         st.markdown("""
