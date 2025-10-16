@@ -2,20 +2,16 @@ import streamlit as st
 import nbformat
 from openai import OpenAI
 import re
-import time
 
 # Inicializar cliente de OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-st.set_page_config(page_title="🎧 Lector Inclusivo de Notebooks", layout="centered")
-
 st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 st.write("""
 Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
-Usa los siguientes botones grandes para navegar:
-- **Anterior**: Regresa al bloque anterior.
-- **Reproducir / Pausar**: Inicia o pausa el audio.
-- **Siguiente**: Avanza al siguiente bloque.
+- Si el bloque es **texto**, lo leerá directamente.
+- Si contiene **una fórmula**, dirá primero: *“A continuación verás una fórmula, esta trata sobre...”*
+- Si contiene **una tabla**, dirá primero: *“A continuación verás una tabla con las siguientes columnas...”* y luego leerá cada columna y su tipo.
 """)
 
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
@@ -24,9 +20,9 @@ uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 # Detección del tipo de contenido
 # -------------------------
 def detectar_tipo_contenido(texto):
-    if re.search(r"\$.*\$|\\begin\{equation\}", texto):
+    if re.search(r"\$.*\$|\\begin\{equation\}", texto):  # fórmula LaTeX
         return "formula"
-    elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):
+    elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):  # tabla Markdown
         return "tabla"
     else:
         return "texto"
@@ -37,27 +33,23 @@ def detectar_tipo_contenido(texto):
 def describir_contenido(tipo, texto):
     if tipo == "formula":
         prompt = f"""
-        Eres un asistente que apoya a personas ciegas leyendo notebooks.
-        Di: "A continuación verás una fórmula. Esta trata sobre [tema general de la fórmula, sin símbolos]."
-        Contenido: {texto[:800]}
-        """
+Eres un asistente que apoya a personas ciegas leyendo notebooks. Vas a generar una frase introductoria breve con este formato:
+"A continuación verás una fórmula. Esta trata sobre [explicación corta del tema de la fórmula, sin decir qué es ni usar símbolos]."
+No repitas la fórmula, ni la leas como símbolos, ni digas 'aquí hay una fórmula matemática'.
+Contenido: {texto[:800]}
+"""
     elif tipo == "tabla":
         prompt = f"""
-        Eres un asistente que apoya a personas ciegas leyendo notebooks.
-        El contenido es una tabla. 
-        Di: "A continuación verás una tabla con las siguientes columnas:" 
-        Luego menciona cada columna y su tipo (numérica, texto, identificador, etc.).
-        Contenido: {texto[:1000]}
-        """
-    elif tipo == "código":
-        prompt = f"""
-        Eres un asistente que apoya a personas ciegas leyendo notebooks.
-        El contenido es una celda de código Python. 
-        Di brevemente qué hace el código, sin leerlo línea por línea.
-        Contenido: {texto[:800]}
-        """
+Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es una tabla.
+Primero di: "A continuación verás una tabla con las siguientes columnas:"
+Luego, menciona cada columna junto con su tipo de dato inferido (numérica, texto, identificador, fecha, etc.), en un formato claro, por ejemplo:
+- columna edad, tipo numérica
+- columna nombre, tipo texto
+Si hay filas, indica cuántas aproximadamente hay.
+Contenido: {texto[:1000]}
+"""
     else:
-        prompt = texto
+        prompt = texto  # texto plano, no necesita descripción
 
     if tipo == "texto":
         return prompt
@@ -81,73 +73,37 @@ def text_to_speech(text):
     return audio_response.read()
 
 # -------------------------
-# Control de navegación
+# Procesamiento del archivo
 # -------------------------
-if "bloques" not in st.session_state:
-    st.session_state.bloques = []
-if "index" not in st.session_state:
-    st.session_state.index = 0
-
-def cargar_notebook(uploaded_file):
-    nb = nbformat.read(uploaded_file, as_version=4)
-    bloques = []
-    for i, cell in enumerate(nb.cells, 1):
-        tipo_celda = cell["cell_type"]
-        contenido = cell["source"].strip()
-        if not contenido:
+if uploaded_file is not None:
+    notebook = nbformat.read(uploaded_file, as_version=4)
+    for i, cell in enumerate(notebook.cells, 1):
+        cell_type = cell["cell_type"]
+        cell_source = cell["source"].strip()
+        if not cell_source:
             continue
-        tipo = detectar_tipo_contenido(contenido)
-        bloques.append((i, tipo_celda, tipo, contenido))
-    st.session_state.bloques = bloques
-    st.session_state.index = 0
 
-if uploaded_file is not None and not st.session_state.bloques:
-    cargar_notebook(uploaded_file)
+        with st.spinner(f"🔎 Analizando bloque {i}..."):
+            tipo = detectar_tipo_contenido(cell_source)
 
-# -------------------------
-# Mostrar bloque actual
-# -------------------------
-def reproducir_bloque(i):
-    if not st.session_state.bloques:
-        return
-    _, tipo_celda, tipo, contenido = st.session_state.bloques[i]
-    st.subheader(f"📘 Bloque {i+1}")
-    if tipo_celda == "markdown" and tipo == "texto":
-        st.markdown(contenido)
-        st.audio(text_to_speech(contenido), format="audio/mp3")
-    elif tipo_celda == "markdown" and tipo in ["formula", "tabla"]:
-        intro = describir_contenido(tipo, contenido)
-        st.write(intro)
-        st.audio(text_to_speech(intro), format="audio/mp3")
-        st.markdown(contenido)
-        st.audio(text_to_speech(contenido), format="audio/mp3")
-    elif tipo_celda == "code":
-        intro = describir_contenido("código", contenido)
-        st.write(intro)
-        st.audio(text_to_speech(intro), format="audio/mp3")
-        st.code(contenido, language="python")
+            # Texto normal
+            if cell_type == "markdown" and tipo == "texto":
+                st.markdown(cell_source)
+                st.audio(text_to_speech(cell_source), format="audio/mp3")
 
-# -------------------------
-# Botones grandes
-# -------------------------
-col1, col2, col3 = st.columns([1, 2, 1])
+            # Fórmula o tabla
+            elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
+                explicacion = describir_contenido(tipo, cell_source)
+                st.markdown(f"### 💬 Bloque {i}: descripción previa")
+                st.write(explicacion)
+                st.audio(text_to_speech(explicacion), format="audio/mp3")
+                st.markdown(cell_source)
+                st.audio(text_to_speech(cell_source), format="audio/mp3")
 
-with col1:
-    if st.button("⬅️ Anterior", use_container_width=True):
-        if st.session_state.index > 0:
-            st.session_state.index -= 1
-            st.rerun()
-
-with col2:
-    if st.button("⏯️ Reproducir / Pausar", use_container_width=True):
-        reproducir_bloque(st.session_state.index)
-
-with col3:
-    if st.button("➡️ Siguiente", use_container_width=True):
-        if st.session_state.index < len(st.session_state.bloques) - 1:
-            st.session_state.index += 1
-            st.rerun()
-
-# Mostrar bloque actual
-if st.session_state.bloques:
-    reproducir_bloque(st.session_state.index)
+            # Código
+            elif cell_type == "code":
+                explicacion = describir_contenido("código", cell_source)
+                st.markdown(f"### 💡 Bloque de código {i}")
+                st.write(explicacion)
+                st.audio(text_to_speech(explicacion), format="audio/mp3")
+                st.code(cell_source, language="python")
