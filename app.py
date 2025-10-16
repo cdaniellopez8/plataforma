@@ -8,31 +8,62 @@ import re
 st.set_page_config(page_title="Lector Inclusivo de Notebook", layout="centered")
 
 # --- Función para convertir texto a audio (mp3 en base64) ---
-def text_to_audio_base64(text, lang="es-us"):  # Español latino
-    tts = gTTS(text=text, lang=lang, tld="com.mx")  # Acento mexicano
-    buf = io.BytesIO()
-    tts.write_to_fp(buf)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode()
+def text_to_audio_base64(text, lang="es"):
+    try:
+        tts = gTTS(text=text, lang=lang, tld="com.mx")  # Español latino (México)
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode()
+    except:
+        # Fallback sin tld si falla
+        tts = gTTS(text=text, lang=lang)
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode()
 
-# --- Limpieza de texto (evita leer títulos y símbolos) ---
+# --- Limpieza de texto ---
 def limpiar_texto(texto):
-    texto = re.sub(r"#+", "", texto)  # eliminar #
-    texto = re.sub(r"[\*\_\~\`\>\-]", "", texto)  # limpiar markdown
+    texto = re.sub(r"#+", "", texto)
+    texto = re.sub(r"[\*\_\~\`\>\-]", "", texto)
     texto = texto.strip()
     return texto
 
+# --- Detectar fórmulas y tablas ---
+def detectar_contenido_especial(texto):
+    avisos = []
+    # Detectar fórmulas LaTeX
+    if re.search(r'\$.*?\$|\\\[.*?\\\]|\\\(.*?\\\)', texto):
+        avisos.append("Atención: este fragmento contiene fórmulas matemáticas.")
+    # Detectar tablas markdown
+    if re.search(r'\|.*\|.*\|', texto):
+        avisos.append("Atención: este fragmento contiene una tabla.")
+    # Detectar código con muchas líneas
+    if texto.count('\n') > 10:
+        avisos.append("Atención: este fragmento contiene código extenso.")
+    return avisos
+
 # --- Descripción automática del tipo de contenido ---
 def describir_para_usuario(tipo, texto):
-    texto = limpiar_texto(texto)
+    texto_limpio = limpiar_texto(texto)
+    descripcion = ""
+    
     if tipo == "code":
-        return "A continuación verás una celda de código, que contiene instrucciones en lenguaje Python."
+        descripcion = "A continuación verás una celda de código en Python."
     elif tipo == "markdown":
-        return "A continuación escucharás una descripción de texto explicativo."
+        descripcion = "A continuación escucharás texto explicativo."
     elif tipo == "output":
-        return "A continuación escucharás el resultado de una celda ejecutada."
+        descripcion = "A continuación escucharás el resultado de una ejecución."
     else:
-        return "Contenido no identificado."
+        descripcion = "Contenido del notebook."
+    
+    # Agregar avisos de contenido especial
+    avisos = detectar_contenido_especial(texto)
+    if avisos:
+        descripcion += " " + " ".join(avisos)
+    
+    return descripcion
 
 # --- Procesar notebook ---
 def procesar_notebook(archivo):
@@ -45,7 +76,10 @@ def procesar_notebook(archivo):
             continue
         descripcion = describir_para_usuario(tipo, texto)
         contenido = limpiar_texto(texto[:1000])
-        chunks.append(f"{descripcion} {contenido}")
+        chunks.append({
+            'texto_completo': f"{descripcion} {contenido}",
+            'texto_visual': texto[:500]
+        })
     return chunks
 
 # --- Inicialización de variables de sesión ---
@@ -53,8 +87,26 @@ if "chunks" not in st.session_state:
     st.session_state.chunks = []
 if "index" not in st.session_state:
     st.session_state.index = 0
-if "audio_uris" not in st.session_state:
-    st.session_state.audio_uris = []
+if "audio_cache" not in st.session_state:
+    st.session_state.audio_cache = {}
+
+# --- Generar audio único por ID ---
+def get_audio_for_chunk(idx):
+    if idx not in st.session_state.audio_cache:
+        texto = st.session_state.chunks[idx]['texto_completo']
+        audio_b64 = text_to_audio_base64(texto)
+        st.session_state.audio_cache[idx] = f"data:audio/mp3;base64,{audio_b64}"
+    return st.session_state.audio_cache[idx]
+
+# --- Generar audios de hover (solo una vez) ---
+def get_hover_audios():
+    if 'hover_audios' not in st.session_state:
+        st.session_state.hover_audios = {
+            'prev': text_to_audio_base64("Botón anterior"),
+            'play': text_to_audio_base64("Botón reproducir o pausar"),
+            'next': text_to_audio_base64("Botón siguiente")
+        }
+    return st.session_state.hover_audios
 
 # --- Subida de archivo ---
 st.title("🧠 Lector inclusivo de notebooks (.ipynb)")
@@ -64,126 +116,117 @@ archivo = st.file_uploader("Por favor, carga tu archivo .ipynb", type=["ipynb"])
 if archivo:
     if not st.session_state.chunks:
         st.session_state.chunks = procesar_notebook(archivo)
-        st.session_state.audio_uris = [None] * len(st.session_state.chunks)
         st.session_state.index = 0
-
-    def ensure_audio_for_index(i):
-        if st.session_state.audio_uris[i] is None:
-            texto = st.session_state.chunks[i]
-            audio_b64 = text_to_audio_base64(texto)
-            st.session_state.audio_uris[i] = f"data:audio/mp3;base64,{audio_b64}"
 
     current_idx = st.session_state.index
     total = len(st.session_state.chunks)
 
     st.markdown(f"### Fragmento {current_idx + 1} de {total}")
-    st.text_area("Texto actual:", st.session_state.chunks[current_idx], height=200)
+    st.text_area("Texto actual:", st.session_state.chunks[current_idx]['texto_visual'], height=200)
 
-    # --- Genera audio para el fragmento actual ---
-    ensure_audio_for_index(current_idx)
+    # --- Obtener audio del fragmento actual ---
+    audio_src = get_audio_for_chunk(current_idx)
+    hover_audios = get_hover_audios()
+    
+    # ID único para el audio basado en el índice
+    audio_id = f"audioMain_{current_idx}"
     
     # --- Reproduce el audio principal ---
-    audio_html = f"""
-    <audio id="audioMain" autoplay controls style="width: 100%;">
-        <source src="{st.session_state.audio_uris[current_idx]}" type="audio/mp3">
-    </audio>
-    """
-    st.markdown(audio_html, unsafe_allow_html=True)
-
-    # --- Audios hover para los botones ---
-    audio_prev_b64 = text_to_audio_base64("Anterior")
-    audio_play_b64 = text_to_audio_base64("Reproducir o pausar")
-    audio_next_b64 = text_to_audio_base64("Siguiente")
-
-    # Insertar audios ocultos para hover
     st.markdown(f"""
-    <audio id="hoverPrev" src="data:audio/mp3;base64,{audio_prev_b64}"></audio>
-    <audio id="hoverPlay" src="data:audio/mp3;base64,{audio_play_b64}"></audio>
-    <audio id="hoverNext" src="data:audio/mp3;base64,{audio_next_b64}"></audio>
+    <audio id="{audio_id}" autoplay controls style="width: 100%; margin-bottom: 20px;">
+        <source src="{audio_src}" type="audio/mp3">
+    </audio>
+    """, unsafe_allow_html=True)
+
+    # --- Audios hover (ocultos) ---
+    st.markdown(f"""
+    <audio id="hoverPrev" preload="auto"></audio>
+    <audio id="hoverPlay" preload="auto"></audio>
+    <audio id="hoverNext" preload="auto"></audio>
     """, unsafe_allow_html=True)
 
     # --- Controles accesibles ---
     col1, col2, col3 = st.columns(3)
 
-    # Botón anterior
     with col1:
-        if st.button("⏮️ Anterior", use_container_width=True, key="btn_prev"):
+        if st.button("⏮️ Anterior", use_container_width=True, key=f"btn_prev_{current_idx}"):
             if st.session_state.index > 0:
                 st.session_state.index -= 1
                 st.rerun()
 
-    # Botón reproducir/pausar
     with col2:
-        st.button("⏯️ Reproducir/Pausar", use_container_width=True, key="btn_play")
+        st.button("⏯️ Reproducir/Pausar", use_container_width=True, key=f"btn_play_{current_idx}")
 
-    # Botón siguiente
     with col3:
-        if st.button("⏭️ Siguiente", use_container_width=True, key="btn_next"):
+        if st.button("⏭️ Siguiente", use_container_width=True, key=f"btn_next_{current_idx}"):
             if st.session_state.index < total - 1:
                 st.session_state.index += 1
                 st.rerun()
 
-    # --- JavaScript para controlar audio y hover ---
-    st.markdown("""
+    # --- JavaScript mejorado para controlar audio y hover ---
+    st.markdown(f"""
     <script>
-    // Esperar a que el DOM esté listo
-    setTimeout(function() {
-        const iframe = window.parent.document.querySelector('iframe[title="streamlit_app"]') || window.parent.document;
-        const doc = iframe.contentDocument || iframe.document || window.parent.document;
+    (function() {{
+        // Cargar audios hover
+        const hoverPrev = document.getElementById('hoverPrev');
+        const hoverPlay = document.getElementById('hoverPlay');
+        const hoverNext = document.getElementById('hoverNext');
         
-        // Obtener audios
-        const audioMain = doc.getElementById('audioMain');
-        const hoverPrev = doc.getElementById('hoverPrev');
-        const hoverPlay = doc.getElementById('hoverPlay');
-        const hoverNext = doc.getElementById('hoverNext');
+        hoverPrev.src = "data:audio/mp3;base64,{hover_audios['prev']}";
+        hoverPlay.src = "data:audio/mp3;base64,{hover_audios['play']}";
+        hoverNext.src = "data:audio/mp3;base64,{hover_audios['next']}";
         
-        // Obtener botones usando data-testid
-        const buttons = doc.querySelectorAll('button[data-testid*="baseButton"]');
-        let btnPrev, btnPlay, btnNext;
+        // Función para encontrar el audio principal
+        function getMainAudio() {{
+            return document.getElementById('{audio_id}');
+        }}
         
-        buttons.forEach(btn => {
-            const text = btn.textContent || btn.innerText;
-            if (text.includes('Anterior')) btnPrev = btn;
-            else if (text.includes('Reproducir')) btnPlay = btn;
-            else if (text.includes('Siguiente')) btnNext = btn;
-        });
+        // Función para encontrar botones
+        function setupButtons() {{
+            const buttons = window.parent.document.querySelectorAll('button[kind="secondary"]');
+            
+            buttons.forEach((btn, idx) => {{
+                const text = btn.textContent || btn.innerText;
+                
+                if (text.includes('Anterior')) {{
+                    btn.onmouseenter = () => {{
+                        hoverPrev.currentTime = 0;
+                        hoverPrev.play().catch(e => console.log('Audio hover bloqueado'));
+                    }};
+                }}
+                else if (text.includes('Reproducir') || text.includes('Pausar')) {{
+                    btn.onclick = (e) => {{
+                        const audio = getMainAudio();
+                        if (audio) {{
+                            if (audio.paused) {{
+                                audio.play();
+                            }} else {{
+                                audio.pause();
+                            }}
+                        }}
+                    }};
+                    btn.onmouseenter = () => {{
+                        hoverPlay.currentTime = 0;
+                        hoverPlay.play().catch(e => console.log('Audio hover bloqueado'));
+                    }};
+                }}
+                else if (text.includes('Siguiente')) {{
+                    btn.onmouseenter = () => {{
+                        hoverNext.currentTime = 0;
+                        hoverNext.play().catch(e => console.log('Audio hover bloqueado'));
+                    }};
+                }}
+            }});
+        }}
         
-        // Función play/pause
-        if (btnPlay && audioMain) {
-            btnPlay.addEventListener('click', function() {
-                if (audioMain.paused) {
-                    audioMain.play();
-                } else {
-                    audioMain.pause();
-                }
-            });
-        }
-        
-        // Eventos hover
-        if (btnPrev && hoverPrev) {
-            btnPrev.addEventListener('mouseenter', function() {
-                hoverPrev.currentTime = 0;
-                hoverPrev.play();
-            });
-        }
-        
-        if (btnPlay && hoverPlay) {
-            btnPlay.addEventListener('mouseenter', function() {
-                hoverPlay.currentTime = 0;
-                hoverPlay.play();
-            });
-        }
-        
-        if (btnNext && hoverNext) {
-            btnNext.addEventListener('mouseenter', function() {
-                hoverNext.currentTime = 0;
-                hoverNext.play();
-            });
-        }
-    }, 1000);
+        // Ejecutar con retry
+        setTimeout(setupButtons, 100);
+        setTimeout(setupButtons, 500);
+        setTimeout(setupButtons, 1000);
+    }})();
     </script>
     """, unsafe_allow_html=True)
 
 else:
     st.info("Por favor, sube un archivo .ipynb para comenzar.")
-    st.markdown("📢 Este lector te guiará con audio paso a paso una vez cargues el archivo.")
+    st.markdown("📢 Este lector te guiará con audio paso a paso. Detecta automáticamente fórmulas, tablas y código extenso.")
