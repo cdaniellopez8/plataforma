@@ -10,4 +10,6 @@ openai>=1.0.0
 streamlit
 nbformat
 requests
+PyPDF2
+
 
