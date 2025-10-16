@@ -10,9 +10,43 @@ st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 st.write("""
 Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
 - Si el bloque es **texto**, lo leerá directamente.
-- Si contiene **una fórmula**, dirá primero: *“A continuación verás una fórmula, esta trata sobre...”*
-- Si contiene **una tabla**, dirá primero: *“A continuación verás una tabla con las siguientes columnas...”* y luego leerá cada columna y su tipo.
+- Si contiene **una fórmula**, dirá primero: *"A continuación verás una fórmula, esta trata sobre..."*
+- Si contiene **una tabla**, dirá primero: *"A continuación verás una tabla con las siguientes columnas..."* y luego leerá cada columna y su tipo.
 """)
+
+# -------------------------
+# Audio de bienvenida
+# -------------------------
+if "audio_bienvenida_reproducido" not in st.session_state:
+    st.session_state.audio_bienvenida_reproducido = False
+
+if not st.session_state.audio_bienvenida_reproducido:
+    texto_bienvenida = """
+    Bienvenido al Lector Inclusivo de Notebooks. 
+    Esta aplicación te permite escuchar el contenido de archivos de Jupyter Notebook de forma accesible.
+    
+    Funciona de la siguiente manera:
+    - Cuando subas un archivo punto ipynb, el sistema lo analizará automáticamente.
+    - Si encuentra texto, lo leerá directamente.
+    - Si encuentra una fórmula matemática, primero te explicará de qué trata antes de mostrarla.
+    - Si encuentra una tabla, te describirá las columnas y sus tipos de datos.
+    - Para el código, te dará una explicación de lo que hace.
+    
+    Para comenzar, por favor sube tu archivo de notebook usando el botón que aparece a continuación.
+    """
+    
+    # Generar audio de bienvenida
+    with st.spinner("🎵 Preparando audio de bienvenida..."):
+        audio_bienvenida = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="alloy",
+            input=texto_bienvenida
+        )
+        audio_bytes = audio_bienvenida.read()
+    
+    st.markdown("### 🔊 Audio de bienvenida")
+    st.audio(audio_bytes, format="audio/mp3", autoplay=True)
+    st.session_state.audio_bienvenida_reproducido = True
 
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 
