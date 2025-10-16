@@ -2,6 +2,7 @@ import streamlit as st
 import nbformat
 from openai import OpenAI
 import re
+import base64
 
 # Inicializar cliente de OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -184,36 +185,150 @@ if uploaded_file is not None:
     
     # Mostrar bloque actual
     if st.session_state.bloques_audio:
+        # Inicializar índice de audio dentro del bloque
+        if "indice_audio_bloque" not in st.session_state:
+            st.session_state.indice_audio_bloque = 0
+        
         indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
         
-        # Calcular qué audio mostrar dentro del bloque
         bloque_actual = st.session_state.bloques_audio[indice]
+        total_audios_bloque = len(bloque_actual["audios"])
+        indice_audio = st.session_state.indice_audio_bloque
+        
+        # Asegurar que el índice de audio esté dentro de rango
+        if indice_audio >= total_audios_bloque:
+            indice_audio = 0
+            st.session_state.indice_audio_bloque = 0
         
         st.markdown(f"### 📍 Bloque {bloque_actual['numero']} de {total_bloques}")
         
-        # Mostrar el contenido actual
-        for audio_info in bloque_actual["audios"]:
-            if "texto" in audio_info:
-                st.write(audio_info["texto"])
-            
-            st.audio(audio_info["bytes"], format="audio/mp3", autoplay=True)
-            
-            if audio_info["mostrar_contenido"]:
-                if bloque_actual["tipo_celda"] == "code":
-                    st.code(bloque_actual["contenido"], language="python")
-                else:
-                    st.markdown(bloque_actual["contenido"])
-            
-            # Solo mostrar el primer audio por ahora
-            break
+        if total_audios_bloque > 1:
+            st.markdown(f"**Audio {indice_audio + 1} de {total_audios_bloque} en este bloque**")
         
-        # Botón siguiente
-        col1, col2, col3 = st.columns([1, 1, 1])
+        # Mostrar el audio actual del bloque
+        audio_info = bloque_actual["audios"][indice_audio]
+        
+        if "texto" in audio_info:
+            st.write(audio_info["texto"])
+        
+        st.audio(audio_info["bytes"], format="audio/mp3", autoplay=True)
+        
+        if audio_info["mostrar_contenido"]:
+            if bloque_actual["tipo_celda"] == "code":
+                st.code(bloque_actual["contenido"], language="python")
+            else:
+                st.markdown(bloque_actual["contenido"])
+        
+        # Generar audios hover para botones (solo una vez)
+        if "hover_audios_generados" not in st.session_state:
+            st.session_state.audio_hover_anterior = text_to_speech("Anterior")
+            st.session_state.audio_hover_siguiente = text_to_speech("Siguiente")
+            st.session_state.audio_hover_reiniciar = text_to_speech("Reiniciar")
+            st.session_state.hover_audios_generados = True
+        
+        # Insertar audios hover ocultos
+        import base64
+        audio_anterior_b64 = base64.b64encode(st.session_state.audio_hover_anterior).decode()
+        audio_siguiente_b64 = base64.b64encode(st.session_state.audio_hover_siguiente).decode()
+        audio_reiniciar_b64 = base64.b64encode(st.session_state.audio_hover_reiniciar).decode()
+        
+        st.markdown(f"""
+        <audio id="hoverAnterior" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_anterior_b64}" type="audio/mp3">
+        </audio>
+        <audio id="hoverSiguiente" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_siguiente_b64}" type="audio/mp3">
+        </audio>
+        <audio id="hoverReiniciar" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_reiniciar_b64}" type="audio/mp3">
+        </audio>
+        """, unsafe_allow_html=True)
+        
+        # Botones de navegación
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("⏮️ Anterior", use_container_width=True, key="btn_anterior"):
+                if st.session_state.indice_actual > 0:
+                    st.session_state.indice_actual -= 1
+                    st.session_state.indice_audio_bloque = 0  # Reiniciar al primer audio del bloque anterior
+                    st.rerun()
+        
         with col2:
+            if st.button("🔄 Reiniciar", use_container_width=True, key="btn_reiniciar"):
+                st.session_state.indice_audio_bloque = 0  # Reiniciar al primer audio del bloque actual
+                st.rerun()
+        
+        with col3:
             if st.button("⏭️ Siguiente", use_container_width=True, key="btn_siguiente"):
-                if st.session_state.indice_actual < total_bloques - 1:
+                # Si hay más audios en el bloque actual, avanzar al siguiente audio
+                if st.session_state.indice_audio_bloque < total_audios_bloque - 1:
+                    st.session_state.indice_audio_bloque += 1
+                    st.rerun()
+                # Si no, avanzar al siguiente bloque
+                elif st.session_state.indice_actual < total_bloques - 1:
                     st.session_state.indice_actual += 1
+                    st.session_state.indice_audio_bloque = 0
                     st.rerun()
                 else:
                     st.info("✅ Has llegado al final del notebook")
+        
+        # JavaScript para manejar hover
+        st.markdown("""
+        <script>
+        (function() {
+            function initHover() {
+                const hoverAnterior = document.getElementById('hoverAnterior');
+                const hoverSiguiente = document.getElementById('hoverSiguiente');
+                const hoverReiniciar = document.getElementById('hoverReiniciar');
+                
+                if (!hoverAnterior || !hoverSiguiente || !hoverReiniciar) {
+                    return false;
+                }
+                
+                const allButtons = document.querySelectorAll('button');
+                let btnAnterior, btnSiguiente, btnReiniciar;
+                
+                allButtons.forEach(btn => {
+                    const text = btn.textContent || btn.innerText || '';
+                    if (text.includes('Anterior')) btnAnterior = btn;
+                    else if (text.includes('Siguiente')) btnSiguiente = btn;
+                    else if (text.includes('Reiniciar')) btnReiniciar = btn;
+                });
+                
+                if (btnAnterior) {
+                    btnAnterior.addEventListener('mouseenter', function() {
+                        hoverAnterior.currentTime = 0;
+                        hoverAnterior.play().catch(e => console.log('Error:', e));
+                    });
+                }
+                
+                if (btnSiguiente) {
+                    btnSiguiente.addEventListener('mouseenter', function() {
+                        hoverSiguiente.currentTime = 0;
+                        hoverSiguiente.play().catch(e => console.log('Error:', e));
+                    });
+                }
+                
+                if (btnReiniciar) {
+                    btnReiniciar.addEventListener('mouseenter', function() {
+                        hoverReiniciar.currentTime = 0;
+                        hoverReiniciar.play().catch(e => console.log('Error:', e));
+                    });
+                }
+                
+                return true;
+            }
+            
+            let attempts = 0;
+            const maxAttempts = 15;
+            const interval = setInterval(function() {
+                attempts++;
+                if (initHover() || attempts >= maxAttempts) {
+                    clearInterval(interval);
+                }
+            }, 200);
+        })();
+        </script>
+        """, unsafe_allow_html=True)
