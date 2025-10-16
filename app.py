@@ -231,7 +231,7 @@ if uploaded_file is not None:
     
     # Mostrar bloque actual
     if st.session_state.bloques_audio:
-        # Inicializar índice de audio dentro del bloque
+        # Inicializar índice de audio dentro del bloque si no existe
         if "indice_audio_bloque" not in st.session_state:
             st.session_state.indice_audio_bloque = 0
         
@@ -244,8 +244,8 @@ if uploaded_file is not None:
         
         # Asegurar que el índice de audio esté dentro de rango
         if indice_audio >= total_audios_bloque:
-            indice_audio = 0
             st.session_state.indice_audio_bloque = 0
+            indice_audio = 0
         
         st.markdown(f"### 📍 Bloque {bloque_actual['numero']} de {total_bloques}")
         
@@ -383,3 +383,4 @@ if uploaded_file is not None:
         })();
         </script>
         """, unsafe_allow_html=True)
+        
