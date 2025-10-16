@@ -3,11 +3,27 @@ import nbformat
 from openai import OpenAI
 import re
 import base64
+import time
 
-st.set_page_config(page_title="Lector Inclusivo de Notebooks (.ipynb)", layout="centered")
+# Inicializar cliente OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ---------------- Funciones auxiliares ----------------
+st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
+st.write("""
+Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
+
+🧭 **Instrucciones:**
+- Sube un archivo `.ipynb`.
+- Escucha la lectura de cada bloque.
+- Usa el **botón grande central**:
+  - 👆 *Un clic:* pausa o reanuda el audio actual.  
+  - 👆👆 *Doble clic:* pasa al siguiente bloque.  
+- Los botones de **reiniciar** y **anterior** están debajo.
+""")
+
+uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
+
+# --- Detección del tipo de contenido ---
 def detectar_tipo_contenido(texto):
     if re.search(r"\$.*\$|\\begin\{equation\}", texto):
         return "formula"
@@ -16,213 +32,142 @@ def detectar_tipo_contenido(texto):
     else:
         return "texto"
 
-def limpiar_texto(texto):
-    lines = texto.splitlines()
-    lines = [re.sub(r"^[#>\-\*\s]+", "", l).strip() for l in lines]
-    lines = [l for l in lines if l]
-    return " ".join(lines).strip()
-
+# --- Descripción guiada según tipo ---
 def describir_contenido(tipo, texto):
     if tipo == "formula":
-        prompt = (
-            "Eres un narrador en español para personas ciegas. "
-            "Di solo una frase del tipo: "
-            "\"A continuación verás una fórmula. Esta trata sobre [breve descripción sin símbolos]\". "
-            f"Contenido: {texto[:800]}"
-        )
+        prompt = f"""
+        Eres un asistente que apoya a personas ciegas leyendo notebooks.
+        Vas a generar una frase en español:
+        "A continuación verás una fórmula. Esta trata sobre [explicación corta del tema de la fórmula, sin símbolos]."
+        No leas los signos matemáticos ni digas 'símbolos extraños'.
+        Contenido:
+        {texto[:800]}
+        """
     elif tipo == "tabla":
-        prompt = (
-            "Eres un narrador en español para personas ciegas. "
-            "Di: \"A continuación verás una tabla con las siguientes columnas:\" "
-            "y luego lista cada columna con su tipo inferido (numérica, texto, identificador, fecha). "
-            f"Contenido: {texto[:1000]}"
-        )
-    elif tipo == "codigo":
-        prompt = (
-            "Eres un narrador en español para personas ciegas. "
-            "Di una frase corta explicando qué hace este bloque de código, sin leer el código. "
-            f"Contenido: {texto[:1000]}"
-        )
+        prompt = f"""
+        Eres un asistente que apoya a personas ciegas leyendo notebooks.
+        El contenido es una tabla.
+        Primero di: "A continuación verás una tabla con las siguientes columnas:"
+        Luego menciona cada columna junto con su tipo de dato inferido (numérica, texto, fecha, etc.)
+        Contenido:
+        {texto[:1000]}
+        """
     else:
         return texto
 
-    resp = client.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+        temperature=0.3
     )
-    return resp.choices[0].message.content.strip()
+    return response.choices[0].message.content
 
-def text_to_bytes_audio(text):
-    audio_resp = client.audio.speech.create(
+# --- Conversión texto a voz ---
+def text_to_speech(text):
+    audio_response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice="alloy",
         input=text
     )
-    return audio_resp.read()
+    return audio_response.read()
 
-def bytes_to_data_uri(mp3_bytes):
-    b64 = base64.b64encode(mp3_bytes).decode("utf-8")
-    return f"data:audio/mp3;base64,{b64}"
-
-# ---------------- Instrucciones iniciales ----------------
-if "instrucciones_leidas" not in st.session_state:
-    instrucciones_texto = (
-        "Bienvenido al lector inclusivo de notebooks. "
-        "Hay tres botones grandes. "
-        "El del centro pausa o reanuda con un clic, y avanza al siguiente con doble clic. "
-        "El de la izquierda va al bloque anterior. "
-        "El de la derecha reinicia el audio actual. "
-        "Si pasas el cursor sobre un botón, escucharás su descripción."
-    )
-    instr_bytes = text_to_bytes_audio(instrucciones_texto)
-    st.session_state.instrucciones_audio = bytes_to_data_uri(instr_bytes)
-    st.session_state.instrucciones_leidas = False
-
-st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
-
-if not st.session_state.instrucciones_leidas:
-    st.markdown(f"""
-    <audio autoplay>
-      <source src="{st.session_state.instrucciones_audio}" type="audio/mp3">
-    </audio>
-    """, unsafe_allow_html=True)
-    st.session_state.instrucciones_leidas = True
-
-# ---------------- Subida del archivo ----------------
-uploaded = st.file_uploader("📤 Sube tu archivo .ipynb", type=["ipynb"])
-if uploaded is None:
-    st.stop()
-
-# ---------------- Procesar el notebook ----------------
-nb = nbformat.read(uploaded, as_version=4)
-cells = [c for c in nb.cells if c.get("source", "").strip()]
-if not cells:
-    st.error("No se encontraron celdas con contenido.")
-    st.stop()
-
-# ---------- Estado ----------
-if "index" not in st.session_state or st.session_state.get("last_file") != uploaded.name:
+# --- Inicialización de sesión ---
+if "audios" not in st.session_state:
+    st.session_state.audios = []
+if "index" not in st.session_state:
     st.session_state.index = 0
-    st.session_state.last_file = uploaded.name
+if "audio_urls" not in st.session_state:
+    st.session_state.audio_urls = []
+if "is_playing" not in st.session_state:
+    st.session_state.is_playing = False
+if "hover_played" not in st.session_state:
+    st.session_state.hover_played = False
 
-params = st.query_params
-action = params.get("action", [""])[0] if isinstance(params.get("action"), list) else params.get("action", "")
+# --- Procesamiento del archivo ---
+if uploaded_file:
+    notebook = nbformat.read(uploaded_file, as_version=4)
+    audios = []
 
-if action == "next" and st.session_state.index < len(cells) - 1:
-    st.session_state.index += 1
-elif action == "prev" and st.session_state.index > 0:
-    st.session_state.index -= 1
-elif action == "restart":
-    pass  # solo reinicia el audio
-st.query_params.clear()
+    for cell in notebook.cells:
+        if not cell["source"].strip():
+            continue
 
-# ---------- Preparar bloque ----------
-i = st.session_state.index
-cell = cells[i]
-raw = cell["source"]
-tipo = detectar_tipo_contenido(raw)
-texto = limpiar_texto(raw)
+        cell_type = cell["cell_type"]
+        texto = cell["source"].strip()
+        tipo = detectar_tipo_contenido(texto)
 
-if cell["cell_type"] == "code":
-    intro = describir_contenido("codigo", raw)
-    texto_a_leer = intro
-else:
-    if tipo in ["formula", "tabla"]:
-        intro = describir_contenido(tipo, raw)
-        texto_a_leer = intro + "\n\n" + texto
-    else:
-        texto_a_leer = texto
+        if cell_type == "markdown" and tipo in ["formula", "tabla"]:
+            explicacion = describir_contenido(tipo, texto)
+            combined_text = f"{explicacion}. {texto}"
+        else:
+            combined_text = texto
 
-# Generar audio
-audio_bytes = text_to_bytes_audio(texto_a_leer)
-audio_uri = bytes_to_data_uri(audio_bytes)
+        audios.append(combined_text)
 
-# Audios hover
-hover_prev = bytes_to_data_uri(text_to_bytes_audio("Botón anterior, vuelve al bloque anterior."))
-hover_center = bytes_to_data_uri(text_to_bytes_audio("Botón principal. Un clic pausa o reanuda, doble clic pasa al siguiente bloque."))
-hover_restart = bytes_to_data_uri(text_to_bytes_audio("Botón reiniciar, vuelve a reproducir el audio actual desde el comienzo."))
+    st.session_state.audios = audios
 
-# ---------- Interfaz ----------
-st.markdown(f"### 🔹 Bloque {i+1} de {len(cells)} — tipo: {tipo}")
-if cell["cell_type"] == "code":
-    st.code(raw, language="python")
-else:
-    st.text_area("Vista previa del contenido", texto, height=150)
+# --- Reproducir audio ---
+def reproducir_audio(idx):
+    texto = st.session_state.audios[idx]
+    audio_bytes = text_to_speech(texto)
+    audio_base64 = base64.b64encode(audio_bytes).decode()
+    audio_html = f"""
+    <audio id="audio_player" autoplay>
+        <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
+    </audio>
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
 
-html = f"""
-<style>
-  .btn {{
-    width: 32%;
-    height: 130px;
-    font-size: 22px;
-    color: white;
-    border: none;
-    border-radius: 12px;
-    margin: 5px;
-  }}
-  #prevBtn {{ background-color: #2E8B57; }}
-  #mainBtn {{ background-color: #1f77b4; }}
-  #restartBtn {{ background-color: #B22222; }}
-  .btn:hover {{ opacity: 0.8; }}
-</style>
+# --- Botones grandes ---
+if st.session_state.audios:
+    idx = st.session_state.index
+    st.markdown(f"### 🔊 Bloque {idx + 1} de {len(st.session_state.audios)}")
+    st.text_area("Contenido del bloque:", st.session_state.audios[idx], height=150)
 
-<audio id="player" preload="auto">
-  <source src="{audio_uri}" type="audio/mp3">
-</audio>
+    # JS para hover y control de clics
+    js_script = """
+    <script>
+    let audio = document.getElementById("audio_player");
+    let button = document.getElementById("mainButton");
+    let lastClick = 0;
 
-<audio id="hoverPrev"><source src="{hover_prev}" type="audio/mp3"></audio>
-<audio id="hoverMain"><source src="{hover_center}" type="audio/mp3"></audio>
-<audio id="hoverRestart"><source src="{hover_restart}" type="audio/mp3"></audio>
+    button.onmouseenter = () => {
+        if (!window.hasPlayedHover) {
+            const hoverAudio = new Audio('data:audio/mp3;base64,{{hover_audio}}');
+            hoverAudio.play();
+            window.hasPlayedHover = true;
+        }
+    };
 
-<div style="display:flex; justify-content:space-between;">
-  <button class="btn" id="prevBtn">⏮ Anterior</button>
-  <button class="btn" id="mainBtn">🎵 Reproducir / Siguiente</button>
-  <button class="btn" id="restartBtn">🔁 Reiniciar</button>
-</div>
+    button.onclick = () => {
+        const now = Date.now();
+        if (now - lastClick < 400) {
+            window.parent.postMessage({ type: "next" }, "*");
+        } else {
+            if (audio.paused) audio.play();
+            else audio.pause();
+        }
+        lastClick = now;
+    };
+    </script>
+    """
 
-<script>
-  const player = document.getElementById('player');
-  const prevBtn = document.getElementById('prevBtn');
-  const mainBtn = document.getElementById('mainBtn');
-  const restartBtn = document.getElementById('restartBtn');
-  const hoverPrev = document.getElementById('hoverPrev');
-  const hoverMain = document.getElementById('hoverMain');
-  const hoverRestart = document.getElementById('hoverRestart');
+    # Generar audio del hover (una sola vez)
+    hover_audio = text_to_speech("Botón principal. Un clic pausa o reanuda. Doble clic pasa al siguiente bloque.")
+    hover_b64 = base64.b64encode(hover_audio).decode()
 
-  function navigate(action) {{
-    const url = new URL(window.location);
-    url.searchParams.set('action', action);
-    url.searchParams.set('t', Date.now());
-    window.location.href = url.toString();
-  }}
+    # Reproducir bloque actual
+    reproducir_audio(idx)
 
-  // hover help
-  prevBtn.addEventListener('mouseenter', () => {{ hoverPrev.currentTime = 0; hoverPrev.play().catch(()=>{{}}); }});
-  mainBtn.addEventListener('mouseenter', () => {{ hoverMain.currentTime = 0; hoverMain.play().catch(()=>{{}}); }});
-  restartBtn.addEventListener('mouseenter', () => {{ hoverRestart.currentTime = 0; hoverRestart.play().catch(()=>{{}}); }});
-
-  // click actions
-  prevBtn.addEventListener('click', () => navigate('prev'));
-  restartBtn.addEventListener('click', () => navigate('restart'));
-
-  let clickTimeout;
-  mainBtn.addEventListener('click', () => {{
-    if (clickTimeout) {{
-      clearTimeout(clickTimeout);
-      navigate('next'); // doble clic
-    }} else {{
-      clickTimeout = setTimeout(() => {{
-        clickTimeout = null;
-        if (player.paused) player.play().catch(()=>{{}});
-        else player.pause();
-      }}, 250);
-    }}
-  }});
-
-  // Autoplay intento
-  try {{ player.play().catch(()=>{{}}); }} catch(e){{}}
-</script>
-"""
-
-st.components.v1.html(html, height=260, scrolling=False)
+    # Renderizar botones
+    st.markdown(f"""
+    <div style="text-align:center; margin-top: 30px;">
+        <button id="mainButton" style="width:300px; height:100px; font-size:24px; background-color:#007bff; color:white; border-radius:12px;">
+            🎧 Control principal
+        </button>
+        <div style="margin-top:20px;">
+            <button id="restart" style="width:200px; height:70px; font-size:20px; background-color:#f39c12; color:white; border-radius:10px;">🔄 Reiniciar</button>
+            <button id="prev" style="width:200px; height:70px; font-size:20px; background-color:#27ae60; color:white; border-radius:10px;">⬅️ Anterior</button>
+        </div>
+    </div>
+    """ + js_script.replace("{{hover_audio}}", hover_b64), unsafe_allow_html=True)
