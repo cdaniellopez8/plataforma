@@ -115,6 +115,7 @@ if uploaded_file is not None:
     if "bloques_audio" not in st.session_state:
         st.session_state.bloques_audio = []
         st.session_state.indice_actual = 0
+        st.session_state.indice_audio_bloque = 0
         st.session_state.notebook_cargado = False
     
     # Procesar notebook solo una vez
