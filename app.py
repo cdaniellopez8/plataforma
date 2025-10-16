@@ -97,6 +97,43 @@ Contenido: {texto[:1000]}
         return response.choices[0].message.content
 
 # -------------------------
+# Leer fórmulas correctamente
+# -------------------------
+def leer_formula_correctamente(texto):
+    """Convierte fórmulas LaTeX a texto legible para TTS"""
+    prompt = f"""
+Eres un asistente que convierte fórmulas matemáticas en LaTeX a lenguaje natural en español para personas ciegas.
+
+Instrucciones:
+- Lee la fórmula de forma natural, como si la estuvieras explicando verbalmente
+- NO digas letras sueltas como "e igual m c dos"
+- Di nombres completos: "E igual a m por c al cuadrado"
+- Para exponentes usa "al cuadrado", "al cubo", "elevado a la potencia"
+- Para fracciones usa "dividido por" o "sobre"
+- Para raíces usa "raíz cuadrada de", "raíz cúbica de"
+- Para símbolos griegos usa su nombre: "alpha", "beta", "delta", "sigma"
+- Para sumas usa "suma de"
+- Para integrales usa "integral de"
+
+Ejemplos:
+- $E=mc^2$ → "E igual a m por c al cuadrado"
+- $x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$ → "x igual a menos b más menos raíz cuadrada de b al cuadrado menos cuatro a c, todo dividido por dos a"
+- $\int_0^\infty e^{-x} dx$ → "integral desde cero hasta infinito de e elevado a menos x, de equis"
+
+Fórmula a convertir:
+{texto}
+
+Responde SOLO con la lectura en lenguaje natural, sin explicaciones adicionales.
+"""
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
+    )
+    return response.choices[0].message.content
+
+# -------------------------
 # Conversión texto a voz
 # -------------------------
 def text_to_speech(text):
@@ -153,7 +190,13 @@ if uploaded_file is not None:
                 elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
                     explicacion = describir_contenido(tipo, cell_source)
                     audio_explicacion = text_to_speech(explicacion)
-                    audio_contenido = text_to_speech(cell_source)
+                    
+                    # Para fórmulas, convertir a lenguaje natural antes de generar audio
+                    if tipo == "formula":
+                        contenido_legible = leer_formula_correctamente(cell_source)
+                        audio_contenido = text_to_speech(contenido_legible)
+                    else:
+                        audio_contenido = text_to_speech(cell_source)
                     
                     bloque["audios"].append({
                         "descripcion": f"Descripción de {tipo}",
