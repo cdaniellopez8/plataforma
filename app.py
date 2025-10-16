@@ -1,13 +1,15 @@
 import streamlit as st
-import json
-from gtts import gTTS
-import io
+import nbformat
 from openai import OpenAI
 
+# Inicializar cliente de OpenAI
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-client = OpenAI()
+st.title("📘 Lector Inteligente de Notebooks Jupyter (.ipynb)")
+st.write("Sube un archivo `.ipynb` y el modelo te explicará cada celda antes de mostrarla.")
 
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+# Subir archivo
+uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 
 def describe_chunk(cell_type, cell_source):
     prompt = f"""
@@ -25,44 +27,24 @@ def describe_chunk(cell_type, cell_source):
     )
     return response.choices[0].message.content
 
-
-def tts_from_text(text, lang="es"):
-    """Convierte texto a audio en memoria."""
-    tts = gTTS(text, lang=lang)
-    audio_bytes = io.BytesIO()
-    tts.write_to_fp(audio_bytes)
-    return audio_bytes.getvalue()
-
-
-st.title("🎧 Lector accesible de Notebooks (.ipynb)")
-
-uploaded_file = st.file_uploader("Sube tu archivo .ipynb", type=["ipynb"])
-
 if uploaded_file is not None:
-    notebook = json.load(uploaded_file)
-    st.success("Archivo cargado correctamente ✅")
+    # Leer el archivo .ipynb
+    notebook = nbformat.read(uploaded_file, as_version=4)
+    
+    for cell in notebook.cells:
+        cell_type = cell["cell_type"]
+        cell_source = cell["source"]
 
-    cells = notebook.get("cells", [])
-    st.write(f"Se encontraron **{len(cells)}** celdas en el notebook.")
-
-    for i, cell in enumerate(cells):
-        cell_type = cell.get("cell_type", "")
-        cell_source = "".join(cell.get("source", [])).strip()
-
-        if not cell_source:
-            continue
-
-        st.markdown(f"### 📦 Celda {i+1} ({cell_type})")
-
-        if st.button(f"🔊 Escuchar celda {i+1}", key=f"btn{i}"):
-            # LLM genera la descripción previa
+        # Pedir descripción con LLM
+        with st.spinner("Analizando bloque..."):
             description = describe_chunk(cell_type, cell_source)
-            full_text = f"{description}. Ahora el contenido: {cell_source}"
+        
+        st.markdown(f"### 💡 Descripción del siguiente bloque:")
+        st.write(description)
 
-            # Convertir a audio
-            audio = tts_from_text(full_text)
-            st.audio(audio, format="audio/mp3")
+        # Mostrar contenido del bloque
+        if cell_type == "markdown":
+            st.markdown(cell_source)
+        elif cell_type == "code":
+            st.code(cell_source, language="python")
 
-        # Mostrar vista previa textual
-
-        st.code(cell_source[:500] + ("..." if len(cell_source) > 500 else ""), language="python" if cell_type=="code" else None)
