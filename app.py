@@ -2,23 +2,16 @@ import streamlit as st
 import nbformat
 from openai import OpenAI
 import re
-import time
+import base64
 
-# Inicializar cliente
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
+st.set_page_config(page_title="Lector Inclusivo", layout="centered")
 st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 
-# Instrucciones iniciales habladas
-instrucciones_texto = """
-Bienvenido al lector inclusivo de notebooks.
-Esta aplicación leerá en voz alta el contenido de tu archivo paso a paso.
-Solo hay un botón grande en pantalla.
-Presiona una vez para pausar o reanudar el audio actual.
-Presiona dos veces seguidas para pasar al siguiente bloque automáticamente.
-"""
-
-# Convertir instrucciones a audio
+# -------------------------
+# Función para generar audio
+# -------------------------
 def text_to_speech(text):
     audio_response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
@@ -27,30 +20,52 @@ def text_to_speech(text):
     )
     return audio_response.read()
 
-# Mostrar instrucciones y reproducir
-st.write(instrucciones_texto)
-st.audio(text_to_speech(instrucciones_texto), format="audio/mp3")
+# -------------------------
+# Instrucciones iniciales
+# -------------------------
+instrucciones = """
+Bienvenido al lector inclusivo de notebooks.
+Esta aplicación leerá el contenido de tu archivo paso a paso.
+Solo hay un botón grande en pantalla:
+- Un clic: pausa o reanuda el audio.
+- Doble clic: pasa al siguiente bloque automáticamente.
+Cuando pases el cursor por encima del botón, escucharás una guía auditiva.
+"""
+audio_instrucciones = text_to_speech(instrucciones)
 
-uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
+st.markdown("### 🧭 Instrucciones")
+st.write(instrucciones)
+
+# Mostrar audio inicial
+audio_b64 = base64.b64encode(audio_instrucciones).decode()
+st.markdown(
+    f"""
+    <audio id="instruccionesAudio" autoplay>
+      <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+    </audio>
+    """,
+    unsafe_allow_html=True,
+)
+
+uploaded_file = st.file_uploader("📤 Sube tu archivo .ipynb", type=["ipynb"])
 
 # -------------------------
-# Detección del tipo de contenido
+# Detectar tipo de contenido
 # -------------------------
 def detectar_tipo_contenido(texto):
-    if re.search(r"\$.*\$|\\begin\{equation\}", texto):  
+    if re.search(r"\$.*\$|\\begin\{equation\}", texto):
         return "formula"
-    elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):  
+    elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):
         return "tabla"
     else:
         return "texto"
 
 # -------------------------
-# Descripción guiada según tipo
+# Descripción accesible
 # -------------------------
 def describir_contenido(tipo, texto):
     if tipo == "formula":
         prompt = f"""
-        Eres un asistente que apoya a personas ciegas leyendo notebooks.
         Explica brevemente en español, con lenguaje natural, qué trata esta fórmula.
         No leas símbolos ni ecuaciones. Usa frases como:
         "A continuación verás una fórmula que explica..."
@@ -59,17 +74,15 @@ def describir_contenido(tipo, texto):
         """
     elif tipo == "tabla":
         prompt = f"""
-        Eres un asistente que apoya a personas ciegas leyendo notebooks.
-        Describe brevemente la tabla.
+        Describe brevemente la tabla en español.
         Di: "A continuación verás una tabla con las siguientes columnas:"
-        Luego menciona las columnas y sus tipos de dato (numérico, texto, fecha, etc.).
+        Luego menciona las columnas y sus tipos de dato.
         Contenido:
         {texto[:1000]}
         """
     elif tipo == "código":
         prompt = f"""
-        Eres un asistente que ayuda a personas ciegas a entender código Python.
-        Explica brevemente qué hace el código, en español, sin leerlo literalmente.
+        Explica brevemente qué hace este código Python, en español, sin leerlo literalmente.
         Contenido:
         {texto[:1000]}
         """
@@ -79,68 +92,97 @@ def describir_contenido(tipo, texto):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.5
+        temperature=0.5,
     )
     return response.choices[0].message.content
 
 # -------------------------
-# Reproductor interactivo
+# Reproducción del contenido
 # -------------------------
 if uploaded_file is not None:
     notebook = nbformat.read(uploaded_file, as_version=4)
-    cells = [cell for cell in notebook.cells if cell["source"].strip()]
+    cells = [c for c in notebook.cells if c["source"].strip()]
     total = len(cells)
 
     if "indice" not in st.session_state:
         st.session_state.indice = 0
-        st.session_state.paused = False
-        st.session_state.last_click = 0.0
 
     i = st.session_state.indice
     cell = cells[i]
     tipo = detectar_tipo_contenido(cell["source"])
 
-    # Obtener texto y explicación
     if cell["cell_type"] == "code":
-        explicacion = describir_contenido("código", cell["source"])
+        texto = describir_contenido("código", cell["source"])
     elif tipo in ["formula", "tabla"]:
-        explicacion = describir_contenido(tipo, cell["source"])
+        texto = describir_contenido(tipo, cell["source"])
     else:
-        explicacion = cell["source"]
+        texto = cell["source"]
 
-    # Mostrar contenido textual y audio
+    audio_data = text_to_speech(texto)
+    audio_b64 = base64.b64encode(audio_data).decode()
+
     st.markdown(f"### 🔊 Bloque {i+1} de {total}")
-    st.markdown(explicacion)
-    st.audio(text_to_speech(explicacion), format="audio/mp3")
+    st.markdown(texto)
 
-    # Botón grande único
+    # Reproductor de audio controlable desde JS
     st.markdown(
-        """
+        f"""
+        <audio id="lectorAudio" autoplay>
+          <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+
+        <audio id="hoverAudio">
+          <source src="data:audio/mp3;base64,{base64.b64encode(text_to_speech('Botón de reproducción. Haz un clic para pausar o dos clics para pasar al siguiente bloque.')).decode()}" type="audio/mp3">
+        </audio>
+
         <style>
-        div.stButton > button {
+        #lectorBtn {{
             width: 100%;
             height: 120px;
-            font-size: 28px;
+            font-size: 30px;
             background-color: #4682B4;
             color: white;
-            border-radius: 15px;
-        }
+            border: none;
+            border-radius: 18px;
+            cursor: pointer;
+        }}
+        #lectorBtn:hover {{
+            background-color: #5A9BD3;
+        }}
         </style>
+
+        <button id="lectorBtn">🎵 Reproducir / Pausar / Siguiente</button>
+
+        <script>
+        const btn = document.getElementById('lectorBtn');
+        const audio = document.getElementById('lectorAudio');
+        const hoverAudio = document.getElementById('hoverAudio');
+        let lastClick = 0;
+
+        btn.addEventListener('mouseenter', () => {{
+            hoverAudio.currentTime = 0;
+            hoverAudio.play();
+        }});
+
+        btn.addEventListener('click', () => {{
+            const now = Date.now();
+            if (now - lastClick < 500) {{
+                // Doble clic → siguiente bloque
+                window.parent.postMessage({{ type: 'streamlit:rerun' }}, '*');
+            }} else {{
+                // Clic simple → pausa o reanuda
+                if (audio.paused) {{
+                    audio.play();
+                }} else {{
+                    audio.pause();
+                }}
+            }}
+            lastClick = now;
+        }});
+        </script>
         """,
         unsafe_allow_html=True,
     )
 
-    # Acción del botón
-    if st.button("🎵 Reproducir / Pausar / Siguiente"):
-        now = time.time()
-        if now - st.session_state.last_click < 0.6:
-            # Doble clic → siguiente bloque
-            st.session_state.indice += 1
-            if st.session_state.indice >= total:
-                st.success("✅ Has terminado de escuchar el notebook completo.")
-            st.rerun()
-        else:
-            # Un solo clic → alternar pausa
-            st.session_state.paused = not st.session_state.paused
-            st.info("⏸️ Pausa activada" if st.session_state.paused else "▶️ Reproduciendo")
-        st.session_state.last_click = now
+    if st.session_state.indice >= total:
+        st.success("✅ Has terminado de escuchar el notebook completo.")
