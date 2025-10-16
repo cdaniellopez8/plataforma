@@ -1,230 +1,99 @@
 import streamlit as st
 import nbformat
-from gtts import gTTS
-import base64
-import io
+from openai import OpenAI
 import re
 
-st.set_page_config(page_title="Lector Inclusivo de Notebook", layout="centered")
+# Inicializar cliente
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# --- Función para convertir texto a audio (mp3 en base64) ---
-def text_to_audio_base64(text, lang="es"):
-    try:
-        tts = gTTS(text=text, lang=lang, tld="com.mx")  # Español latino (México)
-        buf = io.BytesIO()
-        tts.write_to_fp(buf)
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode()
-    except:
-        # Fallback sin tld si falla
-        tts = gTTS(text=text, lang=lang)
-        buf = io.BytesIO()
-        tts.write_to_fp(buf)
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode()
+st.title("🧠 Lector Inteligente e Inclusivo de Notebooks (.ipynb)")
+st.write("""
+Sube un archivo `.ipynb` y el sistema leerá su contenido en voz alta.  
+- Si es **texto**, lo leerá directamente.  
+- Si es **una fórmula o una tabla**, primero la **explicará brevemente** y luego la **recitará**.
+""")
 
-# --- Limpieza de texto ---
-def limpiar_texto(texto):
-    texto = re.sub(r"#+", "", texto)
-    texto = re.sub(r"[\*\_\~\`\>\-]", "", texto)
-    texto = texto.strip()
-    return texto
+uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 
-# --- Detectar fórmulas y tablas ---
-def detectar_contenido_especial(texto):
-    avisos = []
-    # Detectar fórmulas LaTeX
-    if re.search(r'\$.*?\$|\\\[.*?\\\]|\\\(.*?\\\)', texto):
-        avisos.append("Atención: este fragmento contiene fórmulas matemáticas.")
-    # Detectar tablas markdown
-    if re.search(r'\|.*\|.*\|', texto):
-        avisos.append("Atención: este fragmento contiene una tabla.")
-    # Detectar código con muchas líneas
-    if texto.count('\n') > 10:
-        avisos.append("Atención: este fragmento contiene código extenso.")
-    return avisos
-
-# --- Descripción automática del tipo de contenido ---
-def describir_para_usuario(tipo, texto):
-    texto_limpio = limpiar_texto(texto)
-    descripcion = ""
-    
-    if tipo == "code":
-        descripcion = "A continuación verás una celda de código en Python."
-    elif tipo == "markdown":
-        descripcion = "A continuación escucharás texto explicativo."
-    elif tipo == "output":
-        descripcion = "A continuación escucharás el resultado de una ejecución."
+# -------------------------
+# Función para identificar el tipo de contenido
+# -------------------------
+def detectar_tipo_contenido(texto):
+    if re.search(r"\$.*\$|\\begin\{equation\}", texto):  # detección de fórmula LaTeX
+        return "formula"
+    elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):  # markdown table o formato tabular
+        return "tabla"
     else:
-        descripcion = "Contenido del notebook."
-    
-    # Agregar avisos de contenido especial
-    avisos = detectar_contenido_especial(texto)
-    if avisos:
-        descripcion += " " + " ".join(avisos)
-    
-    return descripcion
+        return "texto"
 
-# --- Procesar notebook ---
-def procesar_notebook(archivo):
-    nb = nbformat.read(archivo, as_version=4)
-    chunks = []
-    for cell in nb.cells:
-        tipo = cell.cell_type
-        texto = str(cell.source)
-        if not texto.strip():
+# -------------------------
+# Descripción sencilla antes de fórmulas o tablas
+# -------------------------
+def describir_contenido(tipo, texto):
+    prompt = f"""
+    Eres un asistente que ayuda a personas ciegas a entender notebooks.  
+    Si el contenido es una fórmula o tabla, descríbelo brevemente de forma sencilla y luego recítalo.  
+    Evita tecnicismos. No hables en plural ni repitas el texto.
+    ---
+    Tipo: {tipo}
+    Contenido:
+    {texto[:1000]}
+    """
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5
+    )
+    return response.choices[0].message.content
+
+# -------------------------
+# Conversión texto a voz
+# -------------------------
+def text_to_speech(text):
+    audio_response = client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        input=text
+    )
+    return audio_response.read()
+
+# -------------------------
+# Procesar archivo
+# -------------------------
+if uploaded_file is not None:
+    notebook = nbformat.read(uploaded_file, as_version=4)
+
+    for i, cell in enumerate(notebook.cells, 1):
+        cell_type = cell["cell_type"]
+        cell_source = cell["source"].strip()
+
+        if not cell_source:
             continue
-        descripcion = describir_para_usuario(tipo, texto)
-        contenido = limpiar_texto(texto[:1000])
-        chunks.append({
-            'texto_completo': f"{descripcion} {contenido}",
-            'texto_visual': texto[:500]
-        })
-    return chunks
 
-# --- Inicialización de variables de sesión ---
-if "chunks" not in st.session_state:
-    st.session_state.chunks = []
-if "index" not in st.session_state:
-    st.session_state.index = 0
-if "audio_cache" not in st.session_state:
-    st.session_state.audio_cache = {}
-if "playing" not in st.session_state:
-    st.session_state.playing = True
+        with st.spinner(f"🪶 Procesando bloque {i}..."):
+            tipo = detectar_tipo_contenido(cell_source)
 
-# --- Generar audio único por ID ---
-def get_audio_for_chunk(idx):
-    if idx not in st.session_state.audio_cache:
-        texto = st.session_state.chunks[idx]['texto_completo']
-        audio_b64 = text_to_audio_base64(texto)
-        st.session_state.audio_cache[idx] = audio_b64
-    return st.session_state.audio_cache[idx]
+            if cell_type == "markdown":
+                if tipo == "texto":
+                    # Leer directamente el texto
+                    st.markdown(cell_source)
+                    audio_bytes = text_to_speech(cell_source)
+                    st.audio(audio_bytes, format="audio/mp3")
 
-# --- Generar audios de hover (solo una vez) ---
-def get_hover_audios():
-    if 'hover_audios' not in st.session_state:
-        st.session_state.hover_audios = {
-            'prev': text_to_audio_base64("Botón anterior"),
-            'play': text_to_audio_base64("Botón reproducir o pausar"),
-            'next': text_to_audio_base64("Botón siguiente")
-        }
-    return st.session_state.hover_audios
+                else:
+                    # Explicar primero si es fórmula o tabla
+                    explicacion = describir_contenido(tipo, cell_source)
+                    st.markdown(f"### 💬 Descripción del bloque {i}")
+                    st.write(explicacion)
+                    st.audio(text_to_speech(explicacion), format="audio/mp3")
 
-# --- Subida de archivo ---
-st.title("🧠 Lector inclusivo de notebooks (.ipynb)")
-archivo = st.file_uploader("Por favor, carga tu archivo .ipynb", type=["ipynb"])
+                    st.markdown(cell_source)
+                    st.audio(text_to_speech(cell_source), format="audio/mp3")
 
-# --- Procesamiento del archivo ---
-if archivo:
-    # Resetear chunks si se sube un nuevo archivo
-    file_key = f"{archivo.name}_{archivo.size}"
-    if "file_key" not in st.session_state or st.session_state.file_key != file_key:
-        st.session_state.chunks = []
-        st.session_state.audio_cache = {}
-        st.session_state.file_key = file_key
-        st.session_state.index = 0
-    
-    if not st.session_state.chunks:
-        st.session_state.chunks = procesar_notebook(archivo)
-        st.session_state.index = 0
-
-    current_idx = st.session_state.index
-    total = len(st.session_state.chunks)
-
-    st.markdown(f"### Fragmento {current_idx + 1} de {total}")
-    st.text_area("Texto actual:", st.session_state.chunks[current_idx]['texto_visual'], height=200, key=f"textarea_{current_idx}")
-
-    # --- Obtener audio del fragmento actual ---
-    audio_b64 = get_audio_for_chunk(current_idx)
-    hover_audios = get_hover_audios()
-    
-    # --- Controles accesibles ---
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if st.button("⏮️ Anterior", use_container_width=True, key=f"btn_prev_{current_idx}"):
-            if st.session_state.index > 0:
-                st.session_state.index -= 1
-                st.session_state.playing = True
-                st.rerun()
-
-    with col2:
-        if st.button("⏯️ Reproducir/Pausar", use_container_width=True, key=f"btn_play_{current_idx}"):
-            st.session_state.playing = not st.session_state.playing
-            st.rerun()
-
-    with col3:
-        if st.button("⏭️ Siguiente", use_container_width=True, key=f"btn_next_{current_idx}"):
-            if st.session_state.index < total - 1:
-                st.session_state.index += 1
-                st.session_state.playing = True
-                st.rerun()
-
-    # --- HTML con audio y JavaScript integrado ---
-    autoplay = "autoplay" if st.session_state.playing else ""
-    
-    st.markdown(f"""
-    <div id="audio-container">
-        <audio id="mainAudio" {autoplay} controls style="width: 100%; margin: 20px 0;">
-            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
-        </audio>
-        
-        <audio id="hoverPrev" preload="auto">
-            <source src="data:audio/mp3;base64,{hover_audios['prev']}" type="audio/mp3">
-        </audio>
-        <audio id="hoverPlay" preload="auto">
-            <source src="data:audio/mp3;base64,{hover_audios['play']}" type="audio/mp3">
-        </audio>
-        <audio id="hoverNext" preload="auto">
-            <source src="data:audio/mp3;base64,{hover_audios['next']}" type="audio/mp3">
-        </audio>
-    </div>
-    
-    <script>
-        // Función para configurar eventos hover
-        function setupHoverEvents() {{
-            const parentDoc = window.parent.document;
-            const buttons = parentDoc.querySelectorAll('button[data-testid="baseButton-secondary"]');
-            
-            const hoverPrev = document.getElementById('hoverPrev');
-            const hoverPlay = document.getElementById('hoverPlay');
-            const hoverNext = document.getElementById('hoverNext');
-            
-            buttons.forEach((btn) => {{
-                const text = btn.textContent;
-                
-                // Remover eventos previos
-                btn.onmouseenter = null;
-                
-                if (text.includes('Anterior') && hoverPrev) {{
-                    btn.onmouseenter = function() {{
-                        hoverPrev.currentTime = 0;
-                        hoverPrev.play().catch(e => {{}});
-                    }};
-                }} 
-                else if (text.includes('Reproducir') && hoverPlay) {{
-                    btn.onmouseenter = function() {{
-                        hoverPlay.currentTime = 0;
-                        hoverPlay.play().catch(e => {{}});
-                    }};
-                }} 
-                else if (text.includes('Siguiente') && hoverNext) {{
-                    btn.onmouseenter = function() {{
-                        hoverNext.currentTime = 0;
-                        hoverNext.play().catch(e => {{}});
-                    }};
-                }}
-            }});
-        }}
-        
-        // Intentar configurar múltiples veces
-        setTimeout(setupHoverEvents, 100);
-        setTimeout(setupHoverEvents, 300);
-        setTimeout(setupHoverEvents, 600);
-        setTimeout(setupHoverEvents, 1000);
-    </script>
-    """, unsafe_allow_html=True)
-
-else:
-    st.info("Por favor, sube un archivo .ipynb para comenzar.")
-    st.markdown("📢 Este lector te guiará con audio paso a paso. Detecta automáticamente fórmulas, tablas y código extenso.")
+            elif cell_type == "code":
+                # Describir código como antes
+                explicacion = describir_contenido("código", cell_source)
+                st.markdown(f"### 💡 Bloque de código {i}")
+                st.write(explicacion)
+                st.audio(text_to_speech(explicacion), format="audio/mp3")
+                st.code(cell_source, language="python")
