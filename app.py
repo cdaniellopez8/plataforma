@@ -10,7 +10,7 @@ st.set_page_config(page_title="Lector Inclusivo de Notebook", layout="centered")
 # --- Función para convertir texto a audio (mp3 en base64) ---
 def text_to_audio_base64(text, lang="es"):
     try:
-        tts = gTTS(text=text, lang=lang, tld="com.mx")  # Español latino (México)
+        tts = gTTS(text=text, lang=lang, tld="com.co")  # Español latino (México)
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
@@ -230,3 +230,4 @@ if archivo:
 else:
     st.info("Por favor, sube un archivo .ipynb para comenzar.")
     st.markdown("📢 Este lector te guiará con audio paso a paso. Detecta automáticamente fórmulas, tablas y código extenso.")
+
