@@ -110,34 +110,110 @@ def text_to_speech(text):
 # Procesamiento del archivo
 # -------------------------
 if uploaded_file is not None:
-    notebook = nbformat.read(uploaded_file, as_version=4)
-    for i, cell in enumerate(notebook.cells, 1):
-        cell_type = cell["cell_type"]
-        cell_source = cell["source"].strip()
-        if not cell_source:
-            continue
+    # Inicializar variables de sesión para navegación
+    if "bloques_audio" not in st.session_state:
+        st.session_state.bloques_audio = []
+        st.session_state.indice_actual = 0
+        st.session_state.notebook_cargado = False
+    
+    # Procesar notebook solo una vez
+    if not st.session_state.notebook_cargado:
+        notebook = nbformat.read(uploaded_file, as_version=4)
+        bloques = []
+        
+        with st.spinner("📚 Procesando notebook..."):
+            for i, cell in enumerate(notebook.cells, 1):
+                cell_type = cell["cell_type"]
+                cell_source = cell["source"].strip()
+                if not cell_source:
+                    continue
 
-        with st.spinner(f"🔎 Analizando bloque {i}..."):
-            tipo = detectar_tipo_contenido(cell_source)
-
-            # Texto normal
-            if cell_type == "markdown" and tipo == "texto":
-                st.markdown(cell_source)
-                st.audio(text_to_speech(cell_source), format="audio/mp3")
-
-            # Fórmula o tabla
-            elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
-                explicacion = describir_contenido(tipo, cell_source)
-                st.markdown(f"### 💬 Bloque {i}: descripción previa")
-                st.write(explicacion)
-                st.audio(text_to_speech(explicacion), format="audio/mp3")
-                st.markdown(cell_source)
-                st.audio(text_to_speech(cell_source), format="audio/mp3")
-
-            # Código
-            elif cell_type == "code":
-                explicacion = describir_contenido("código", cell_source)
-                st.markdown(f"### 💡 Bloque de código {i}")
-                st.write(explicacion)
-                st.audio(text_to_speech(explicacion), format="audio/mp3")
-                st.code(cell_source, language="python")
+                tipo = detectar_tipo_contenido(cell_source)
+                
+                # Crear estructura de bloque
+                bloque = {
+                    "numero": i,
+                    "tipo_celda": cell_type,
+                    "tipo_contenido": tipo,
+                    "contenido": cell_source,
+                    "audios": []
+                }
+                
+                # Generar audios según el tipo
+                if cell_type == "markdown" and tipo == "texto":
+                    audio_bytes = text_to_speech(cell_source)
+                    bloque["audios"].append({
+                        "descripcion": "Texto",
+                        "bytes": audio_bytes,
+                        "mostrar_contenido": True
+                    })
+                
+                elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
+                    explicacion = describir_contenido(tipo, cell_source)
+                    audio_explicacion = text_to_speech(explicacion)
+                    audio_contenido = text_to_speech(cell_source)
+                    
+                    bloque["audios"].append({
+                        "descripcion": f"Descripción de {tipo}",
+                        "texto": explicacion,
+                        "bytes": audio_explicacion,
+                        "mostrar_contenido": False
+                    })
+                    bloque["audios"].append({
+                        "descripcion": f"Contenido de {tipo}",
+                        "bytes": audio_contenido,
+                        "mostrar_contenido": True
+                    })
+                
+                elif cell_type == "code":
+                    explicacion = describir_contenido("código", cell_source)
+                    audio_explicacion = text_to_speech(explicacion)
+                    
+                    bloque["audios"].append({
+                        "descripcion": "Explicación del código",
+                        "texto": explicacion,
+                        "bytes": audio_explicacion,
+                        "mostrar_contenido": False
+                    })
+                
+                bloques.append(bloque)
+        
+        st.session_state.bloques_audio = bloques
+        st.session_state.notebook_cargado = True
+        st.success(f"✅ Notebook procesado: {len(bloques)} bloques encontrados")
+    
+    # Mostrar bloque actual
+    if st.session_state.bloques_audio:
+        indice = st.session_state.indice_actual
+        total_bloques = len(st.session_state.bloques_audio)
+        
+        # Calcular qué audio mostrar dentro del bloque
+        bloque_actual = st.session_state.bloques_audio[indice]
+        
+        st.markdown(f"### 📍 Bloque {bloque_actual['numero']} de {total_bloques}")
+        
+        # Mostrar el contenido actual
+        for audio_info in bloque_actual["audios"]:
+            if "texto" in audio_info:
+                st.write(audio_info["texto"])
+            
+            st.audio(audio_info["bytes"], format="audio/mp3", autoplay=True)
+            
+            if audio_info["mostrar_contenido"]:
+                if bloque_actual["tipo_celda"] == "code":
+                    st.code(bloque_actual["contenido"], language="python")
+                else:
+                    st.markdown(bloque_actual["contenido"])
+            
+            # Solo mostrar el primer audio por ahora
+            break
+        
+        # Botón siguiente
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("⏭️ Siguiente", use_container_width=True, key="btn_siguiente"):
+                if st.session_state.indice_actual < total_bloques - 1:
+                    st.session_state.indice_actual += 1
+                    st.rerun()
+                else:
+                    st.info("✅ Has llegado al final del notebook")
