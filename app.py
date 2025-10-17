@@ -445,3 +445,34 @@ Responde solo con el texto para leer en voz alta:"""
         })();
         </script>
         """, unsafe_allow_html=True)
+
+# -------------------------
+# Accesibilidad con teclado
+# -------------------------
+
+st.markdown("""
+<script>
+document.addEventListener('keydown', function(event) {
+    // Usa las teclas de flecha para navegar
+    if (event.key === 'ArrowLeft') {
+        // ⏮️ Anterior
+        const btn = Array.from(document.querySelectorAll('button'))
+            .find(b => b.textContent.includes('Anterior'));
+        if (btn) btn.click();
+    } else if (event.key === 'ArrowRight') {
+        // ⏭️ Siguiente
+        const btn = Array.from(document.querySelectorAll('button'))
+            .find(b => b.textContent.includes('Siguiente'));
+        if (btn) btn.click();
+    } else if (event.key === 'r' || event.key === 'R') {
+        // 🔄 Reiniciar (con tecla R)
+        const btn = Array.from(document.querySelectorAll('button'))
+            .find(b => b.textContent.includes('Reiniciar'));
+        if (btn) btn.click();
+    }
+});
+</script>
+""", unsafe_allow_html=True)
+
+
+
