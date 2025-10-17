@@ -304,19 +304,21 @@ Responde solo con el texto para leer en voz alta:"""
             st.session_state.audio_hover_reiniciar = text_to_speech("Reiniciar")
             st.session_state.hover_audios_generados = True
         
-        # Insertar audios hover ocultos CON ESTILO VISIBLE TEMPORALMENTE PARA DEBUG
+        # Insertar audios hover ocultos
+        audio_anterior_b64 = base64.b64encode(st.session_state.audio_hover_anterior).decode()
+        audio_siguiente_b64 = base64.b64encode(st.session_state.audio_hover_siguiente).decode()
+        audio_reiniciar_b64 = base64.b64encode(st.session_state.audio_hover_reiniciar).decode()
+        
         st.markdown(f"""
-        <div id="hover-container">
-            <audio id="hoverAnterior" preload="auto" style="display:none;">
-                <source src="data:audio/mp3;base64,{audio_anterior_b64}" type="audio/mp3">
-            </audio>
-            <audio id="hoverSiguiente" preload="auto" style="display:none;">
-                <source src="data:audio/mp3;base64,{audio_siguiente_b64}" type="audio/mp3">
-            </audio>
-            <audio id="hoverReiniciar" preload="auto" style="display:none;">
-                <source src="data:audio/mp3;base64,{audio_reiniciar_b64}" type="audio/mp3">
-            </audio>
-        </div>
+        <audio id="hoverAnterior" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_anterior_b64}" type="audio/mp3">
+        </audio>
+        <audio id="hoverSiguiente" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_siguiente_b64}" type="audio/mp3">
+        </audio>
+        <audio id="hoverReiniciar" preload="auto">
+            <source src="data:audio/mp3;base64,{audio_reiniciar_b64}" type="audio/mp3">
+        </audio>
         """, unsafe_allow_html=True)
         
         # Botones de navegación
@@ -352,111 +354,94 @@ Responde solo con el texto para leer en voz alta:"""
                     st.session_state.indice_audio_bloque = 0
                     st.rerun()
         
-        # JavaScript SIMPLIFICADO para hover
-        st.components.v1.html("""
+        # JavaScript para manejar hover - MEJORADO
+        st.markdown("""
         <script>
+        // Ejecutar inmediatamente cuando se carga
         (function() {
-            console.log('🎯 Iniciando configuración de hover...');
+            let hoversConfigurados = false;
             
-            function setupHover() {
-                // Obtener audios directamente
-                const hoverAnterior = document.getElementById('hoverAnterior');
-                const hoverSiguiente = document.getElementById('hoverSiguiente');
-                const hoverReiniciar = document.getElementById('hoverReiniciar');
+            function initHover() {
+                // Prevenir configuración duplicada
+                if (hoversConfigurados) return true;
                 
-                console.log('Audios encontrados:', {
-                    anterior: !!hoverAnterior,
-                    siguiente: !!hoverSiguiente,
-                    reiniciar: !!hoverReiniciar
-                });
+                // Buscar en el documento principal y en iframes
+                let doc = document;
+                const iframe = window.parent.document.querySelector('iframe');
+                if (iframe && iframe.contentDocument) {
+                    doc = iframe.contentDocument;
+                }
+                
+                const hoverAnterior = doc.getElementById('hoverAnterior') || document.getElementById('hoverAnterior');
+                const hoverSiguiente = doc.getElementById('hoverSiguiente') || document.getElementById('hoverSiguiente');
+                const hoverReiniciar = doc.getElementById('hoverReiniciar') || document.getElementById('hoverReiniciar');
                 
                 if (!hoverAnterior || !hoverSiguiente || !hoverReiniciar) {
-                    console.log('❌ No se encontraron los audios');
+                    console.log('Audios no encontrados aún...');
                     return false;
                 }
                 
-                // Buscar botones en el parent
-                const parentDoc = window.parent.document;
-                const allButtons = parentDoc.querySelectorAll('button');
-                
-                console.log('Total botones encontrados:', allButtons.length);
+                // Buscar botones tanto en el documento como en el parent
+                const allButtons = Array.from(doc.querySelectorAll('button')).concat(
+                    Array.from(document.querySelectorAll('button'))
+                );
                 
                 let btnAnterior, btnSiguiente, btnReiniciar;
                 
-                allButtons.forEach((btn, index) => {
+                allButtons.forEach(btn => {
                     const text = btn.textContent || btn.innerText || '';
-                    console.log(`Botón ${index}: "${text}"`);
-                    
-                    if (text.includes('Anterior') && !btnAnterior) {
-                        btnAnterior = btn;
-                        console.log('✅ Botón Anterior encontrado');
-                    }
-                    else if (text.includes('Siguiente') && !btnSiguiente) {
-                        btnSiguiente = btn;
-                        console.log('✅ Botón Siguiente encontrado');
-                    }
-                    else if (text.includes('Reiniciar') && !btnReiniciar) {
-                        btnReiniciar = btn;
-                        console.log('✅ Botón Reiniciar encontrado');
-                    }
+                    if (text.includes('Anterior') && !btnAnterior) btnAnterior = btn;
+                    else if (text.includes('Siguiente') && !btnSiguiente) btnSiguiente = btn;
+                    else if (text.includes('Reiniciar') && !btnReiniciar) btnReiniciar = btn;
+                });
+                
+                console.log('Botones encontrados:', {
+                    anterior: !!btnAnterior,
+                    siguiente: !!btnSiguiente,
+                    reiniciar: !!btnReiniciar
                 });
                 
                 if (!btnAnterior || !btnSiguiente || !btnReiniciar) {
-                    console.log('❌ No se encontraron todos los botones');
                     return false;
                 }
                 
-                // Configurar eventos hover
-                btnAnterior.addEventListener('mouseenter', function() {
-                    console.log('🎵 Reproduciendo: Anterior');
+                // Configurar eventos
+                btnAnterior.onmouseenter = function() {
+                    console.log('Hover Anterior');
                     hoverAnterior.currentTime = 0;
-                    hoverAnterior.play().then(() => {
-                        console.log('✅ Audio Anterior reproducido');
-                    }).catch(e => {
-                        console.log('❌ Error Anterior:', e);
-                    });
-                });
+                    hoverAnterior.play().catch(e => console.log('Error anterior:', e));
+                };
                 
-                btnSiguiente.addEventListener('mouseenter', function() {
-                    console.log('🎵 Reproduciendo: Siguiente');
+                btnSiguiente.onmouseenter = function() {
+                    console.log('Hover Siguiente');
                     hoverSiguiente.currentTime = 0;
-                    hoverSiguiente.play().then(() => {
-                        console.log('✅ Audio Siguiente reproducido');
-                    }).catch(e => {
-                        console.log('❌ Error Siguiente:', e);
-                    });
-                });
+                    hoverSiguiente.play().catch(e => console.log('Error siguiente:', e));
+                };
                 
-                btnReiniciar.addEventListener('mouseenter', function() {
-                    console.log('🎵 Reproduciendo: Reiniciar');
+                btnReiniciar.onmouseenter = function() {
+                    console.log('Hover Reiniciar');
                     hoverReiniciar.currentTime = 0;
-                    hoverReiniciar.play().then(() => {
-                        console.log('✅ Audio Reiniciar reproducido');
-                    }).catch(e => {
-                        console.log('❌ Error Reiniciar:', e);
-                    });
-                });
+                    hoverReiniciar.play().catch(e => console.log('Error reiniciar:', e));
+                };
                 
-                console.log('✅✅✅ Hover configurado exitosamente');
+                hoversConfigurados = true;
+                console.log('✅ Hovers configurados exitosamente');
                 return true;
             }
             
-            // Intentar varias veces
-            let intentos = 0;
-            const maxIntentos = 30;
-            
-            const intervalo = setInterval(() => {
-                intentos++;
-                console.log(`Intento ${intentos}/${maxIntentos}`);
-                
-                if (setupHover()) {
-                    clearInterval(intervalo);
-                    console.log('🎉 Configuración completada!');
-                } else if (intentos >= maxIntentos) {
-                    clearInterval(intervalo);
-                    console.log('💀 Se agotaron los intentos');
+            // Intentar configurar múltiples veces
+            let attempts = 0;
+            const maxAttempts = 20;
+            const interval = setInterval(function() {
+                attempts++;
+                console.log('Intento', attempts, 'de configurar hovers...');
+                if (initHover() || attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    if (attempts >= maxAttempts) {
+                        console.log('❌ No se pudieron configurar hovers después de', attempts, 'intentos');
+                    }
                 }
-            }, 500);
+            }, 300);
         })();
         </script>
-        """, height=0)
+        """, unsafe_allow_html=True)
