@@ -339,20 +339,17 @@ Fórmula: {cell_source}
 # ----------------------------------------------------
 components.html("""
 <script>
+// --- FIX TECLADO (EXISTENTE) ---
 document.addEventListener('keydown', function(event) {
-    // 1. Evitar interferencia al escribir
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
         return;
     }
 
-    // 2. Función para buscar botones por la 'data-testid' de Streamlit
     function findButtonByTestId(key) {
         const testId = `st.button-${key}`;
-        
         let container = document.querySelector(`[data-testid="${testId}"]`);
         if (container) return container.querySelector('button');
-        
         if (window.parent && window.parent.document) {
             container = window.parent.document.querySelector(`[data-testid="${testId}"]`);
             if (container) return container.querySelector('button');
@@ -360,7 +357,6 @@ document.addEventListener('keydown', function(event) {
         return null;
     }
     
-    // Las keys de tus botones en Python
     const ANTERIOR_KEY = 'btn_anterior';
     const SIGUIENTE_KEY = 'btn_siguiente';
     const REINICIAR_KEY = 'btn_reiniciar_fijo'; 
@@ -380,5 +376,57 @@ document.addEventListener('keydown', function(event) {
         targetButton.click();
     }
 }, true);
+
+// --- NUEVO CÓDIGO PARA HOVER AUDIO ---
+
+function attachHoverAudio() {
+    // Definir las IDs de los audios ocultos y las keys de los botones
+    const hoverMappings = [
+        { key: 'btn_anterior', audioId: 'hoverAnterior' },
+        { key: 'btn_siguiente', audioId: 'hoverSiguiente' },
+        { key: 'btn_reiniciar_fijo', audioId: 'hoverReiniciar' }
+    ];
+
+    hoverMappings.forEach(mapping => {
+        const testId = `st.button-${mapping.key}`;
+        // Buscar el contenedor del botón por su data-testid
+        let container = document.querySelector(`[data-testid="${testId}"]`);
+        
+        // Si no se encuentra en el documento actual, buscar en el documento padre (iframe fix)
+        if (!container && window.parent && window.parent.document) {
+             container = window.parent.document.querySelector(`[data-testid="${testId}"]`);
+        }
+        
+        const button = container ? container.querySelector('button') : null;
+        const audio = document.getElementById(mapping.audioId);
+
+        if (button && audio) {
+            // Eliminar listeners previos para evitar duplicados en reruns
+            button.onmouseover = null; 
+            
+            // Añadir el nuevo listener
+            button.onmouseover = function() {
+                // Detener y rebobinar el audio si ya estaba reproduciéndose o pausado
+                audio.pause();
+                audio.currentTime = 0;
+                audio.play().catch(e => console.error("Error al reproducir audio:", e));
+            };
+        }
+    });
+}
+
+// Ejecutar la función cuando se cargue el script inicialmente
+attachHoverAudio();
+
+// Usar un MutationObserver para re-vincular los eventos después de un rerun de Streamlit
+const observerTarget = document.body || document;
+const observer = new MutationObserver(function(mutations) {
+    attachHoverAudio();
+});
+
+// Observar cambios en el DOM (donde Streamlit re-renderiza los botones)
+observer.observe(observerTarget, { childList: true, subtree: true, attributes: false });
+
 </script>
 """, height=0)
+
