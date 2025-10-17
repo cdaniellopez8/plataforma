@@ -3,7 +3,7 @@ import nbformat
 from openai import OpenAI
 import re
 import base64
-import streamlit.components.v1 as components # Importación necesaria para el fix de teclado
+import streamlit.components.v1 as components
 
 # -------------------------
 # Configuración inicial
@@ -108,7 +108,7 @@ Código: {texto[:1000]}
                 temperature=0.5
             )
             return response.choices[0].message.content
-        except Exception as e:
+        except Exception:
             return f"No fue posible generar la descripción de {tipo}."
 
 # -------------------------
@@ -151,11 +151,10 @@ if uploaded_file is not None:
     # Reiniciar completamente el estado SIEMPRE al cargar un archivo nuevo
     if "uploaded_file_name" not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
         st.session_state.bloques_audio = []
-        st.session_state.indice_actual = 0 # FORZAR INICIO EN EL PRIMER BLOQUE
-        st.session_state.indice_audio_bloque = 0 # FORZAR INICIO EN EL PRIMER AUDIO
+        st.session_state.indice_actual = 0 
+        st.session_state.indice_audio_bloque = 0 
         st.session_state.notebook_cargado = False
         st.session_state.uploaded_file_name = uploaded_file.name
-        # st.rerun() # Una llamada a rerun aquí podría ayudar a estabilizar el estado
 
     # Procesar notebook solo una vez
     if not st.session_state.notebook_cargado:
@@ -166,8 +165,10 @@ if uploaded_file is not None:
             st.stop()
 
         bloques = []
+        # --- LÓGICA DE ORDEN CORREGIDA ---
         with st.spinner("📚 Procesando notebook..."):
-            for i, cell in enumerate(notebook.cells, 1):
+            # Usamos enumerate(..., 1) para que el número de bloque inicie en 1
+            for i, cell in enumerate(notebook.cells, 1): 
                 cell_type = cell["cell_type"]
                 cell_source = cell["source"].strip()
                 if not cell_source:
@@ -175,14 +176,14 @@ if uploaded_file is not None:
 
                 tipo = detectar_tipo_contenido(cell_source)
                 bloque = {
-                    "numero": i,
+                    "numero": i, # El número de celda es ahora el índice de iteración (orden correcto)
                     "tipo_celda": cell_type,
                     "tipo_contenido": tipo,
                     "contenido": cell_source,
                     "audios": []
                 }
 
-                # Generar audios según el tipo
+                # Generar audios según el tipo (código omitido para brevedad, es el mismo que tenías)
                 if cell_type == "markdown" and tipo == "texto":
                     audio_bytes = text_to_speech(cell_source)
                     bloque["audios"].append({"descripcion": "Texto", "bytes": audio_bytes, "mostrar_contenido": True})
@@ -221,12 +222,10 @@ Fórmula: {cell_source}
 
                 bloques.append(bloque)
 
-        # Usar el orden de iteración, el sort es redundante pero se mantiene por seguridad
-        # bloques.sort(key=lambda b: b.get("numero", 0))
-
+        # ELIMINAMOS CUALQUIER SORT. Confiamos en el orden de iteración.
         st.session_state.bloques_audio = bloques
-        st.session_state.indice_actual = 0 # Asegurar inicio en el primer bloque después del procesamiento
-        st.session_state.indice_audio_bloque = 0 # Asegurar inicio en el primer audio después del procesamiento
+        st.session_state.indice_actual = 0
+        st.session_state.indice_audio_bloque = 0
         st.session_state.notebook_cargado = True
         st.success(f"✅ Notebook procesado: {len(bloques)} bloques encontrados")
 
@@ -235,7 +234,6 @@ Fórmula: {cell_source}
         indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
 
-        # Validar índice (Ajuste para reiniciar correctamente si el estado es inválido)
         if indice >= total_bloques or indice < 0:
             st.session_state.indice_actual = 0
             st.session_state.indice_audio_bloque = 0
@@ -245,7 +243,6 @@ Fórmula: {cell_source}
         total_audios_bloque = len(bloque_actual["audios"])
         indice_audio = st.session_state.indice_audio_bloque
 
-        # Validar índice de audio
         if indice_audio >= total_audios_bloque:
             st.session_state.indice_audio_bloque = 0
             indice_audio = 0
@@ -255,33 +252,29 @@ Fórmula: {cell_source}
         if total_audios_bloque > 1:
             st.markdown(f"**Audio {indice_audio + 1} de {total_audios_bloque} en este bloque**")
 
-        # Mostrar el audio actual del bloque
         audio_info = bloque_actual["audios"][indice_audio]
 
         if "texto" in audio_info:
             st.info(audio_info["texto"])
 
-        # Reproducir audio
         if audio_info.get("bytes"):
             st.audio(audio_info["bytes"], format="audio/mp3", autoplay=True)
         else:
             st.warning("Audio no disponible para esta parte del bloque.")
 
-        # Mostrar contenido de la celda si corresponde
         if audio_info["mostrar_contenido"]:
             if bloque_actual["tipo_celda"] == "code":
                 st.code(bloque_actual["contenido"], language="python")
             else:
                 st.markdown(bloque_actual["contenido"])
 
-        # Generar audios hover para botones (solo una vez)
+        # Generar audios hover (código omitido para brevedad)
         if "hover_audios_generados" not in st.session_state:
             st.session_state.audio_hover_anterior = text_to_speech("Anterior")
             st.session_state.audio_hover_siguiente = text_to_speech("Siguiente")
             st.session_state.audio_hover_reiniciar = text_to_speech("Reiniciar")
             st.session_state.hover_audios_generados = True
 
-        # Insertar audios hover ocultos (si existen)
         audio_anterior_b64 = base64.b64encode(st.session_state.audio_hover_anterior).decode() if st.session_state.audio_hover_anterior else ""
         audio_siguiente_b64 = base64.b64encode(st.session_state.audio_hover_siguiente).decode() if st.session_state.audio_hover_siguiente else ""
         audio_reiniciar_b64 = base64.b64encode(st.session_state.audio_hover_reiniciar).decode() if st.session_state.audio_hover_reiniciar else ""
@@ -298,7 +291,7 @@ Fórmula: {cell_source}
         </audio>
         """, unsafe_allow_html=True)
 
-        # Botones de navegación (Con keys estables para el fix de teclado)
+        # Botones de navegación
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -308,14 +301,14 @@ Fórmula: {cell_source}
                     st.rerun()
                 elif st.session_state.indice_actual > 0:
                     st.session_state.indice_actual -= 1
-                    # Al ir al bloque anterior, ir al último audio de ese bloque
+                    # Ir al último audio del bloque anterior
                     st.session_state.indice_audio_bloque = len(st.session_state.bloques_audio[st.session_state.indice_actual]["audios"]) - 1
                     st.rerun()
 
         with col2:
             if st.button("🔄 Reiniciar", use_container_width=True, key="btn_reiniciar_fijo"):
-                st.session_state.indice_actual = 0 # Reiniciar el bloque
-                st.session_state.indice_audio_bloque = 0 # Reiniciar el audio
+                st.session_state.indice_actual = 0
+                st.session_state.indice_audio_bloque = 0
                 st.rerun()
 
         with col3:
@@ -334,33 +327,29 @@ Fórmula: {cell_source}
                     st.rerun()
 
 # ----------------------------------------------------
-# FIX DE ACCESIBILIDAD CON TECLADO
-# (Se mantiene la versión robusta que busca por data-testid)
+# FIX DE ACCESIBILIDAD CON TECLADO Y HOVER
 # ----------------------------------------------------
 components.html("""
 <script>
+// --- UTILITY FUNCTIONS ---
+// Función para buscar botones por la 'data-testid' de Streamlit
+function findButtonByTestId(key) {
+    const testId = `st.button-${key}`;
+    
+    let container = document.querySelector(`[data-testid="${testId}"]`);
+    if (!container && window.parent && window.parent.document) {
+        container = window.parent.document.querySelector(`[data-testid="${testId}"]`);
+    }
+    return container ? container.querySelector('button') : null;
+}
+
+// --- FIX TECLADO (Flechas y R) ---
 document.addEventListener('keydown', function(event) {
-    // 1. Evitar interferencia al escribir
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
         return;
     }
 
-    // 2. Función para buscar botones por la 'data-testid' de Streamlit
-    function findButtonByTestId(key) {
-        const testId = `st.button-${key}`;
-        
-        let container = document.querySelector(`[data-testid="${testId}"]`);
-        if (container) return container.querySelector('button');
-        
-        if (window.parent && window.parent.document) {
-            container = window.parent.document.querySelector(`[data-testid="${testId}"]`);
-            if (container) return container.querySelector('button');
-        }
-        return null;
-    }
-    
-    // Las keys de tus botones en Python
     const ANTERIOR_KEY = 'btn_anterior';
     const SIGUIENTE_KEY = 'btn_siguiente';
     const REINICIAR_KEY = 'btn_reiniciar_fijo'; 
@@ -380,5 +369,42 @@ document.addEventListener('keydown', function(event) {
         targetButton.click();
     }
 }, true);
+
+// --- HOVER AUDIO ---
+
+function attachHoverAudio() {
+    const hoverMappings = [
+        { key: 'btn_anterior', audioId: 'hoverAnterior' },
+        { key: 'btn_siguiente', audioId: 'hoverSiguiente' },
+        { key: 'btn_reiniciar_fijo', audioId: 'hoverReiniciar' }
+    ];
+
+    hoverMappings.forEach(mapping => {
+        const button = findButtonByTestId(mapping.key);
+        const audio = document.getElementById(mapping.audioId);
+
+        if (button && audio) {
+            // Limpiar listeners y asignar el nuevo para el hover
+            button.onmouseover = function() {
+                audio.pause();
+                audio.currentTime = 0;
+                audio.play().catch(e => console.error("Error al reproducir audio:", e));
+            };
+        }
+    });
+}
+
+// Ejecutar la función cuando se cargue el script inicialmente
+attachHoverAudio();
+
+// Usar un MutationObserver para re-vincular los eventos después de un rerun de Streamlit
+const observerTarget = document.body || document;
+const observer = new MutationObserver(function(mutations) {
+    attachHoverAudio();
+});
+
+// Observar cambios en el DOM
+observer.observe(observerTarget, { childList: true, subtree: true, attributes: false });
+
 </script>
 """, height=0)
