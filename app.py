@@ -45,19 +45,8 @@ if not st.session_state.audio_bienvenida_reproducido:
         )
         audio_bytes = audio_bienvenida.read()
     
-    st.markdown("### 🔊 Instrucciones de uso")
-    
-    # Usar HTML con autoplay
-    audio_b64 = base64.b64encode(audio_bytes).decode()
-    st.markdown(f"""
-    <audio autoplay>
-        <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
-    </audio>
-    """, unsafe_allow_html=True)
-    
-    # También mostrar el reproductor visible por si el navegador bloquea autoplay
-    st.audio(audio_bytes, format="audio/mp3")
-    
+    st.markdown("### 🔊 Audio de bienvenida")
+    st.audio(audio_bytes, format="audio/mp3", autoplay=True)
     st.session_state.audio_bienvenida_reproducido = True
 
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
