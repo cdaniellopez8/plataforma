@@ -3,7 +3,7 @@ import nbformat
 from openai import OpenAI
 import re
 import base64
-import streamlit.components.v1 as components # Necesario para el componente HTML
+import streamlit.components.v1 as components 
 
 # Inicializar cliente de OpenAI
 try:
@@ -20,7 +20,7 @@ El sistema te guiará con audios que explican el contenido.
 """)
 
 # -------------------------
-# Audio de bienvenida
+# Audio de bienvenida y Funciones TTS (se mantiene sin cambios)
 # -------------------------
 if "audio_bienvenida_reproducido" not in st.session_state:
     st.session_state.audio_bienvenida_reproducido = False
@@ -33,7 +33,6 @@ if not st.session_state.audio_bienvenida_reproducido:
     """
     with st.spinner("🎵 Preparando audio de bienvenida..."):
         try:
-            # Aquí va tu lógica de bienvenida
             audio_bienvenida = client.audio.speech.create(
                 model="gpt-4o-mini-tts",
                 voice="alloy",
@@ -49,21 +48,20 @@ if not st.session_state.audio_bienvenida_reproducido:
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 
 # -------------------------
-# Detección del tipo de contenido (AÑADIDO: 'grafico')
+# Detección del tipo de contenido
 # -------------------------
 def detectar_tipo_contenido(texto):
     if re.search(r"\$.*\$|\\begin\{equation\}", texto):
         return "formula"
     elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):
         return "tabla"
-    # Detección de imagen Markdown o LaTeX (indicador de gráfico)
     elif re.search(r"(!\[.*\]\(.*\))|(\\includegraphics)", texto):
         return "grafico"
     else:
         return "texto"
 
 # -------------------------
-# Descripción guiada según tipo (PROMPTS MEJORADOS)
+# Descripción guiada según tipo (PROMPT DE TABLA CORREGIDO)
 # -------------------------
 def describir_contenido(tipo, texto):
     if tipo == "formula":
@@ -74,13 +72,14 @@ No repitas la fórmula, ni la leas como símbolos. Usa lenguaje accesible.
 Contenido: {texto[:800]}
 """
     elif tipo == "tabla":
+        # ⭐⭐⭐ PROMPT CORREGIDO: Enfatiza la estructura (columnas y tipos) Y el resumen ⭐⭐⭐
         prompt = f"""
 Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es una tabla de datos.
-Tu tarea es describir la tabla de la manera más accesible y útil, NO leyendo fila por fila.
+Tu tarea es describir la tabla de la manera más accesible y útil.
 Instrucciones:
-1. Comienza diciendo: "A continuación, te describo una tabla de datos. El contenido está organizado en las siguientes columnas:"
-2. Menciona claramente cada nombre de columna seguido de su tipo de dato inferido (por ejemplo: 'Nombre (Texto)', 'Edad (Numérico)', 'Fecha (Fecha)').
-3. Luego, agrega un breve resumen sobre el propósito o el contenido general de los datos.
+1. Comienza diciendo: "A continuación, **escucharás** la descripción de una tabla de datos. Sus columnas son:"
+2. **LEE CLARAMENTE** cada nombre de columna seguido de su tipo de dato inferido. Por ejemplo: 'Columna ID (Identificador)', 'Nombre del Producto (Texto)', 'Precio (Numérico/Moneda)'.
+3. **FINALMENTE**, agrega un resumen conciso sobre el propósito o el contenido general de los datos.
 Contenido de la tabla: {texto[:1000]}
 """
     elif tipo == "grafico":
@@ -89,9 +88,9 @@ Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es
 Tu tarea es proporcionar una **descripción verbal concisa y útil** del gráfico.
 Instrucciones:
 1. Comienza diciendo: "A continuación, **escucharás** la descripción de un gráfico. "
-2. Describe el TIPO de gráfico (Ej: "Es un gráfico de barras", "Es un diagrama de dispersión").
-3. Describe qué representan los EJES (Ej: "El eje X muestra la variable 'Tiempo' y el eje Y muestra la variable 'Temperatura'").
-4. Describe el HALLAZGO CLAVE o la tendencia principal. (Ej: "La tendencia principal es un crecimiento constante", "Se observa una correlación positiva fuerte", "El valor más alto se encuentra en 'Enero'").
+2. Describe el TIPO de gráfico (Ej: "Es un gráfico de barras").
+3. Describe qué representan los EJES (Ej: "El eje X muestra el Tiempo y el eje Y muestra la Temperatura").
+4. Describe el HALLAZGO CLAVE o la tendencia principal.
 Contenido que genera el gráfico o texto asociado: {texto[:1000]}
 """
     elif tipo == "código":
@@ -147,7 +146,7 @@ def text_to_speech(text):
         return b""
 
 # -------------------------
-# Procesamiento del archivo
+# Procesamiento del archivo (se mantiene sin cambios)
 # -------------------------
 if uploaded_file is not None:
     # Reiniciar completamente el estado si se carga un archivo nuevo
@@ -189,10 +188,9 @@ if uploaded_file is not None:
                     audio_bytes = text_to_speech(cell_source)
                     bloque["audios"].append({"descripcion": "Texto", "bytes": audio_bytes, "mostrar_contenido": True})
 
-                # AÑADIDO: 'grafico' al flujo de explicación
                 elif cell_type == "markdown" and tipo in ["formula", "tabla", "grafico"]: 
                     explicacion = describir_contenido(tipo, cell_source)
-                    audio_explicacion = text_to_speech(explicacion)
+                    audio_explicacion = text_to_speech(explicacion) 
                     
                     contenido_legible = ""
                     if tipo == "formula":
@@ -229,11 +227,11 @@ if uploaded_file is not None:
         indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
 
-        if indice >= total_bloques: indice = 0
+        if indice >= total_bloques: st.session_state.indice_actual = 0; indice = 0
         bloque_actual = st.session_state.bloques_audio[indice]
         total_audios_bloque = len(bloque_actual["audios"])
         indice_audio = st.session_state.indice_audio_bloque
-        if indice_audio >= total_audios_bloque: indice_audio = 0
+        if indice_audio >= total_audios_bloque: st.session_state.indice_audio_bloque = 0; indice_audio = 0
         
         # Generar audios hover (manteniendo la lógica de generación)
         if "hover_audios_generados" not in st.session_state:
@@ -323,7 +321,7 @@ if uploaded_file is not None:
 
 
 # ----------------------------------------------------
-# FIX DE ACCESIBILIDAD CON TECLADO Y HOVER (Sin cambios, ya estaba robusto)
+# FIX DE ACCESIBILIDAD CON TECLADO Y HOVER (se mantiene sin cambios)
 # ----------------------------------------------------
 components.html("""
 <script>
