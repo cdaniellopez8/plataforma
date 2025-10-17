@@ -21,6 +21,7 @@ Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva acce
 if "audio_bienvenida_reproducido" not in st.session_state:
     st.session_state.audio_bienvenida_reproducido = False
 
+# Forzar reproducción en la primera carga
 if not st.session_state.audio_bienvenida_reproducido:
     texto_bienvenida = """
     Bienvenido al Lector Inclusivo de Notebooks. 
@@ -44,9 +45,26 @@ if not st.session_state.audio_bienvenida_reproducido:
             input=texto_bienvenida
         )
         audio_bytes = audio_bienvenida.read()
+        # Guardar en session_state para no regenerar
+        st.session_state.audio_bienvenida_bytes = audio_bytes
     
     st.markdown("### 🔊 Audio de bienvenida")
-    st.audio(audio_bytes, format="audio/mp3", autoplay=True)
+    
+    # Usar componente HTML personalizado para forzar autoplay
+    audio_b64 = base64.b64encode(st.session_state.audio_bienvenida_bytes).decode()
+    st.components.v1.html(f"""
+        <audio id="audioBienvenida" autoplay>
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+        <script>
+            const audio = document.getElementById('audioBienvenida');
+            audio.play().catch(e => console.log('Autoplay bloqueado:', e));
+        </script>
+    """, height=0)
+    
+    # También mostrar reproductor visible
+    st.audio(st.session_state.audio_bienvenida_bytes, format="audio/mp3")
+    
     st.session_state.audio_bienvenida_reproducido = True
 
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
