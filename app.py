@@ -61,7 +61,7 @@ def detectar_tipo_contenido(texto):
         return "texto"
 
 # -------------------------
-# Descripción guiada según tipo (PROMPT DE TABLA CORREGIDO)
+# Descripción guiada según tipo
 # -------------------------
 def describir_contenido(tipo, texto):
     if tipo == "formula":
@@ -72,7 +72,6 @@ No repitas la fórmula, ni la leas como símbolos. Usa lenguaje accesible.
 Contenido: {texto[:800]}
 """
     elif tipo == "tabla":
-        # ⭐⭐⭐ PROMPT CORREGIDO: Enfatiza la estructura (columnas y tipos) Y el resumen ⭐⭐⭐
         prompt = f"""
 Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es una tabla de datos.
 Tu tarea es describir la tabla de la manera más accesible y útil.
@@ -146,13 +145,13 @@ def text_to_speech(text):
         return b""
 
 # -------------------------
-# Procesamiento del archivo (se mantiene sin cambios)
+# Procesamiento del archivo
 # -------------------------
 if uploaded_file is not None:
     # Reiniciar completamente el estado si se carga un archivo nuevo
     if "uploaded_file_name" not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
         st.session_state.bloques_audio = []
-        st.session_state.indice_actual = 0
+        st.session_state.indice_actual = 0  # <--- Inicialización en la carga
         st.session_state.indice_audio_bloque = 0
         st.session_state.notebook_cargado = False
         st.session_state.uploaded_file_name = uploaded_file.name
@@ -224,10 +223,13 @@ if uploaded_file is not None:
 
     # Mostrar bloque actual
     if st.session_state.bloques_audio and len(st.session_state.bloques_audio) > 0:
-        indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
-
-        if indice >= total_bloques: st.session_state.indice_actual = 0; indice = 0
+        
+        # ⭐⭐⭐ CORRECCIÓN CLAVE: Forzar el índice a 0 si es un valor inválido o se acaba de cargar ⭐⭐⭐
+        if st.session_state.indice_actual < 0 or st.session_state.indice_actual >= total_bloques:
+            st.session_state.indice_actual = 0
+            
+        indice = st.session_state.indice_actual
         bloque_actual = st.session_state.bloques_audio[indice]
         total_audios_bloque = len(bloque_actual["audios"])
         indice_audio = st.session_state.indice_audio_bloque
@@ -272,6 +274,7 @@ if uploaded_file is not None:
                     st.rerun()
                 elif st.session_state.indice_actual > 0:
                     st.session_state.indice_actual -= 1
+                    # Ir al último sub-audio del bloque anterior
                     st.session_state.indice_audio_bloque = len(st.session_state.bloques_audio[st.session_state.indice_actual]["audios"]) - 1
                     st.rerun()
 
