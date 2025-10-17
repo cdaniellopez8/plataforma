@@ -3,13 +3,12 @@ import nbformat
 from openai import OpenAI
 import re
 import base64
-import streamlit.components.v1 as components # Necesario para el componente HTML al final
+import streamlit.components.v1 as components # Necesario para el componente HTML
 
 # Inicializar cliente de OpenAI
 try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except Exception:
-    # Asegurar que el código no falle si st.secrets no está configurado
     st.error("🚨 Error: No se encontró la clave API de OpenAI. Asegúrate de tenerla en st.secrets['OPENAI_API_KEY'].")
     st.stop()
     
@@ -17,13 +16,11 @@ st.set_page_config(layout="wide")
 st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 st.write("""
 Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
-- Si el bloque es **texto**, lo leerá directamente.
-- Si contiene **una fórmula**, dirá primero: *"A continuación verás una fórmula, esta trata sobre..."*
-- Si contiene **una tabla**, dirá primero: *"A continuación verás una tabla con las siguientes columnas..."* y luego leerá cada columna y su tipo.
+El sistema te guiará con audios que explican el contenido.
 """)
 
 # -------------------------
-# Audio de bienvenida y Funciones TTS (se mantiene sin cambios)
+# Audio de bienvenida
 # -------------------------
 if "audio_bienvenida_reproducido" not in st.session_state:
     st.session_state.audio_bienvenida_reproducido = False
@@ -32,18 +29,11 @@ if not st.session_state.audio_bienvenida_reproducido:
     texto_bienvenida = """
     Bienvenido al Lector Inclusivo de Notebooks. 
     Esta aplicación te permite escuchar el contenido de archivos de Jupyter Notebook de forma accesible.
-    
-    Funciona de la siguiente manera:
-    - Cuando subas un archivo punto ipynb, el sistema lo analizará automáticamente.
-    - Si encuentra texto, lo leerá directamente.
-    - Si encuentra una fórmula matemática, primero te explicará de qué trata antes de mostrarla.
-    - Si encuentra una tabla, te describirá las columnas y sus tipos de datos.
-    - Para el código, te dará una explicación de lo que hace.
-    
     Para comenzar, por favor sube tu archivo de notebook usando el botón que aparece a continuación.
     """
     with st.spinner("🎵 Preparando audio de bienvenida..."):
         try:
+            # Aquí va tu lógica de bienvenida
             audio_bienvenida = client.audio.speech.create(
                 model="gpt-4o-mini-tts",
                 voice="alloy",
@@ -59,33 +49,50 @@ if not st.session_state.audio_bienvenida_reproducido:
 uploaded_file = st.file_uploader("📤 Sube tu notebook", type=["ipynb"])
 
 # -------------------------
-# Detección del tipo de contenido
+# Detección del tipo de contenido (AÑADIDO: 'grafico')
 # -------------------------
 def detectar_tipo_contenido(texto):
     if re.search(r"\$.*\$|\\begin\{equation\}", texto):
         return "formula"
     elif re.search(r"\|.+\|", texto) or re.search(r"---", texto):
         return "tabla"
+    # Detección de imagen Markdown o LaTeX (indicador de gráfico)
+    elif re.search(r"(!\[.*\]\(.*\))|(\\includegraphics)", texto):
+        return "grafico"
     else:
         return "texto"
 
 # -------------------------
-# Descripción guiada según tipo
+# Descripción guiada según tipo (PROMPTS MEJORADOS)
 # -------------------------
 def describir_contenido(tipo, texto):
     if tipo == "formula":
         prompt = f"""
 Eres un asistente que apoya a personas ciegas leyendo notebooks. Vas a generar una frase introductoria breve con este formato:
-"A continuación verás una fórmula. Esta trata sobre [explicación corta del tema de la fórmula, sin decir qué es ni usar símbolos]."
-No repitas la fórmula, ni la leas como símbolos, ni digas 'aquí hay una fórmula matemática'.
+"A continuación **escucharás** una explicación. Esta trata sobre [explicación corta del tema de la fórmula, sin decir qué es ni usar símbolos]. La fórmula en sí es compleja y se presenta a continuación como texto."
+No repitas la fórmula, ni la leas como símbolos. Usa lenguaje accesible.
 Contenido: {texto[:800]}
 """
     elif tipo == "tabla":
         prompt = f"""
-Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es una tabla.
-Primero di: "A continuación verás una tabla con las siguientes columnas:"
-Luego, menciona cada columna junto con su tipo de dato inferido (numérica, texto, identificador, fecha, etc.).
-Contenido: {texto[:1000]}
+Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es una tabla de datos.
+Tu tarea es describir la tabla de la manera más accesible y útil, NO leyendo fila por fila.
+Instrucciones:
+1. Comienza diciendo: "A continuación, te describo una tabla de datos. El contenido está organizado en las siguientes columnas:"
+2. Menciona claramente cada nombre de columna seguido de su tipo de dato inferido (por ejemplo: 'Nombre (Texto)', 'Edad (Numérico)', 'Fecha (Fecha)').
+3. Luego, agrega un breve resumen sobre el propósito o el contenido general de los datos.
+Contenido de la tabla: {texto[:1000]}
+"""
+    elif tipo == "grafico":
+        prompt = f"""
+Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es un gráfico o visualización de datos.
+Tu tarea es proporcionar una **descripción verbal concisa y útil** del gráfico.
+Instrucciones:
+1. Comienza diciendo: "A continuación, **escucharás** la descripción de un gráfico. "
+2. Describe el TIPO de gráfico (Ej: "Es un gráfico de barras", "Es un diagrama de dispersión").
+3. Describe qué representan los EJES (Ej: "El eje X muestra la variable 'Tiempo' y el eje Y muestra la variable 'Temperatura'").
+4. Describe el HALLAZGO CLAVE o la tendencia principal. (Ej: "La tendencia principal es un crecimiento constante", "Se observa una correlación positiva fuerte", "El valor más alto se encuentra en 'Enero'").
+Contenido que genera el gráfico o texto asociado: {texto[:1000]}
 """
     elif tipo == "código":
         prompt = f"""
@@ -107,11 +114,10 @@ Código: {texto[:1000]}
             )
             return response.choices[0].message.content
         except Exception:
-            # Fallback en caso de error de la API
             return f"No fue posible generar la descripción de {tipo}."
 
 # -------------------------
-# Conversión LaTeX a texto hablado
+# Conversión y TTS (se mantiene sin cambios)
 # -------------------------
 def latex_a_texto_hablado(formula):
     texto = formula.replace('$', '').replace('\\(', '').replace('\\)', '').replace('\\[', '').replace('\\]', '')
@@ -129,9 +135,6 @@ def latex_a_texto_hablado(formula):
     texto = re.sub(r'\s+', ' ', texto)
     return texto.strip()
 
-# -------------------------
-# Texto a voz
-# -------------------------
 def text_to_speech(text):
     try:
         audio_response = client.audio.speech.create(
@@ -141,7 +144,7 @@ def text_to_speech(text):
         )
         return audio_response.read()
     except Exception:
-        return b"" # Retorna bytes vacíos en caso de fallo
+        return b""
 
 # -------------------------
 # Procesamiento del archivo
@@ -181,12 +184,13 @@ if uploaded_file is not None:
                     "audios": []
                 }
 
-                # Generar audios según el tipo (manteniendo la lógica de generación)
+                # Generar audios según el tipo
                 if cell_type == "markdown" and tipo == "texto":
                     audio_bytes = text_to_speech(cell_source)
                     bloque["audios"].append({"descripcion": "Texto", "bytes": audio_bytes, "mostrar_contenido": True})
 
-                elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
+                # AÑADIDO: 'grafico' al flujo de explicación
+                elif cell_type == "markdown" and tipo in ["formula", "tabla", "grafico"]: 
                     explicacion = describir_contenido(tipo, cell_source)
                     audio_explicacion = text_to_speech(explicacion)
                     
@@ -199,8 +203,8 @@ if uploaded_file is not None:
                         except Exception:
                             contenido_legible = latex_a_texto_hablado(cell_source)
                         audio_contenido = text_to_speech(contenido_legible)
-                    else: # tabla
-                        audio_contenido = text_to_speech(cell_source)
+                    else: # tabla o grafico
+                        audio_contenido = text_to_speech("Contenido visual principal.")
                     
                     bloque["audios"].append({"descripcion": f"Descripción de {tipo}", "texto": explicacion, "bytes": audio_explicacion, "mostrar_contenido": False})
                     bloque["audios"].append({"descripcion": f"Contenido de {tipo}", "bytes": audio_contenido, "mostrar_contenido": True})
@@ -210,9 +214,10 @@ if uploaded_file is not None:
                     audio_explicacion = text_to_speech(explicacion)
                     bloque["audios"].append({"descripcion": "Explicación del código", "texto": explicacion, "bytes": audio_explicacion, "mostrar_contenido": False})
 
-                bloques.append(bloque)
+                if bloque["audios"]:
+                     bloques.append(bloque)
 
-        # Usar el orden de iteración (i), no sort.
+
         st.session_state.bloques_audio = bloques
         st.session_state.indice_actual = 0
         st.session_state.indice_audio_bloque = 0
@@ -224,20 +229,13 @@ if uploaded_file is not None:
         indice = st.session_state.indice_actual
         total_bloques = len(st.session_state.bloques_audio)
 
-        # 1. Validar y ajustar índices
-        if indice >= total_bloques:
-            st.session_state.indice_actual = 0
-            indice = 0
-
+        if indice >= total_bloques: indice = 0
         bloque_actual = st.session_state.bloques_audio[indice]
         total_audios_bloque = len(bloque_actual["audios"])
         indice_audio = st.session_state.indice_audio_bloque
-
-        if indice_audio >= total_audios_bloque:
-            st.session_state.indice_audio_bloque = 0
-            indice_audio = 0
+        if indice_audio >= total_audios_bloque: indice_audio = 0
         
-        # 2. Generar audios hover (manteniendo la lógica de generación)
+        # Generar audios hover (manteniendo la lógica de generación)
         if "hover_audios_generados" not in st.session_state:
             try:
                 st.session_state.audio_hover_anterior = text_to_speech("Anterior")
@@ -266,9 +264,7 @@ if uploaded_file is not None:
         </audio>
         """, unsafe_allow_html=True)
         
-        # ----------------------------------------------------
-        # 3. MOVER BOTONES DE NAVEGACIÓN AQUÍ (antes del contenido)
-        # ----------------------------------------------------
+        # MOSTRAR BOTONES DE NAVEGACIÓN ANTES DEL CONTENIDO (Ubicación fija)
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -278,12 +274,10 @@ if uploaded_file is not None:
                     st.rerun()
                 elif st.session_state.indice_actual > 0:
                     st.session_state.indice_actual -= 1
-                    # Ir al último audio del bloque anterior
                     st.session_state.indice_audio_bloque = len(st.session_state.bloques_audio[st.session_state.indice_actual]["audios"]) - 1
                     st.rerun()
 
         with col2:
-            # Usar una clave estable (fija) para el botón Reiniciar para facilitar el JS
             if st.button("🔄 Reiniciar", use_container_width=True, key="btn_reiniciar_fijo"):
                 st.session_state.indice_audio_bloque = 0
                 st.rerun()
@@ -305,7 +299,7 @@ if uploaded_file is not None:
         
         st.markdown("---") # Separador visual
 
-        # 4. Mostrar el contenido del bloque
+        # Mostrar el contenido del bloque
         st.markdown(f"### 📍 Bloque {bloque_actual['numero']} de {total_bloques}")
 
         if total_audios_bloque > 1:
@@ -329,12 +323,11 @@ if uploaded_file is not None:
 
 
 # ----------------------------------------------------
-# FIX DE ACCESIBILIDAD CON TECLADO Y HOVER (Usando la versión robusta con data-testid)
+# FIX DE ACCESIBILIDAD CON TECLADO Y HOVER (Sin cambios, ya estaba robusto)
 # ----------------------------------------------------
 components.html("""
 <script>
 // --- UTILITY FUNCTIONS ---
-// Busca botones por su key estable (data-testid)
 function findButtonByTestId(key) {
     const testId = `st.button-${key}`;
     let container = document.querySelector(`[data-testid="${testId}"]`);
@@ -397,16 +390,13 @@ function attachHoverAudio() {
     });
 }
 
-// Ejecutar al cargar y después de cada re-renderizado de Streamlit
 attachHoverAudio();
 
 const observerTarget = document.body || document;
 const observer = new MutationObserver(function(mutations) {
-    // Si Streamlit cambia el DOM, re-vinculamos los audios hover.
     attachHoverAudio();
 });
 
 observer.observe(observerTarget, { childList: true, subtree: true, attributes: false });
-
 </script>
 """, height=0)
