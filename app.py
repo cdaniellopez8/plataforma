@@ -3,10 +3,20 @@ import nbformat
 from openai import OpenAI
 import re
 import base64
+import streamlit.components.v1 as components
 
+# -------------------------
+# Configuración inicial
+# -------------------------
 # Inicializar cliente de OpenAI
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+try:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+except Exception as e:
+    # Manejo si la clave no está disponible (ej. entorno local sin secrets.toml)
+    st.error("🚨 Error: No se encontró la clave API de OpenAI. Asegúrate de tenerla en st.secrets['OPENAI_API_KEY'].")
+    st.stop()
 
+st.set_page_config(layout="wide")
 st.title("🎧 Lector Inclusivo de Notebooks (.ipynb)")
 st.write("""
 Esta aplicación convierte notebooks de Jupyter en una experiencia auditiva accesible.
@@ -45,7 +55,7 @@ if not st.session_state.audio_bienvenida_reproducido:
             audio_bytes = audio_bienvenida.read()
             st.markdown("### 🔊 Audio de bienvenida")
             st.audio(audio_bytes, format="audio/mp3", autoplay=True)
-        except Exception as e:
+        except Exception:
             # Falla silenciosa si la TTS no está disponible en el entorno
             st.warning("No fue posible generar el audio de bienvenida automáticamente.")
     st.session_state.audio_bienvenida_reproducido = True
@@ -81,49 +91,41 @@ Primero di: "A continuación verás una tabla con las siguientes columnas:"
 Luego, menciona cada columna junto con su tipo de dato inferido (numérica, texto, identificador, fecha, etc.).
 Contenido: {texto[:1000]}
 """
+    elif tipo == "código":
+        prompt = f"""
+Eres un asistente que apoya a personas ciegas leyendo notebooks. El contenido es código Python.
+Explica en una frase corta y sencilla qué hace el código y luego explica cada paso importante.
+Código: {texto[:1000]}
+"""
     else:
         prompt = texto
 
     if tipo == "texto":
         return prompt
     else:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5
-        )
-        return response.choices[0].message.content
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"No fue posible generar la descripción de {tipo}: {e}"
 
 # -------------------------
-# Conversión LaTeX a texto hablado
+# Conversión LaTeX a texto hablado (Fallback)
 # -------------------------
 def latex_a_texto_hablado(formula):
+    # Esto es un fallback, la llamada a GPT-4o-mini es mejor
     texto = formula.replace('$', '').replace('\\(', '').replace('\\)', '').replace('\\[', '').replace('\\]', '')
     reemplazos = {
-        '^2': ' al cuadrado',
-        '^3': ' al cubo',
-        '^{2}': ' al cuadrado',
-        '^{3}': ' al cubo',
-        '\\times': ' por',
-        '\\cdot': ' por',
-        '\\frac': ' fracción',
-        '\\sqrt': ' raíz cuadrada de',
-        '\\alpha': ' alfa',
-        '\\beta': ' beta',
-        '\\gamma': ' gamma',
-        '\\delta': ' delta',
-        '\\pi': ' pi',
-        '\\theta': ' theta',
-        '\\sum': ' sumatoria',
-        '\\int': ' integral',
-        '\\infty': ' infinito',
-        '\\pm': ' más menos',
-        '\\leq': ' menor o igual',
-        '\\geq': ' mayor o igual',
-        '=': ' igual a ',
-        '+': ' más ',
-        '-': ' menos ',
-        '*': ' por ',
+        '^2': ' al cuadrado', '^3': ' al cubo', '^{2}': ' al cuadrado', '^{3}': ' al cubo',
+        '\\times': ' por', '\\cdot': ' por', '\\frac': ' fracción', '\\sqrt': ' raíz cuadrada de',
+        '\\alpha': ' alfa', '\\beta': ' beta', '\\gamma': ' gamma', '\\delta': ' delta',
+        '\\pi': ' pi', '\\theta': ' theta', '\\sum': ' sumatoria', '\\int': ' integral',
+        '\\infty': ' infinito', '\\pm': ' más menos', '\\leq': ' menor o igual',
+        '\\geq': ' mayor o igual', '=': ' igual a ', '+': ' más ', '-': ' menos ', '*': ' por ',
     }
     for latex, natural in reemplazos.items():
         texto = texto.replace(latex, natural)
@@ -135,12 +137,16 @@ def latex_a_texto_hablado(formula):
 # Texto a voz
 # -------------------------
 def text_to_speech(text):
-    audio_response = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
-        input=text
-    )
-    return audio_response.read()
+    try:
+        audio_response = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="alloy",
+            input=text
+        )
+        return audio_response.read()
+    except Exception as e:
+        st.error(f"Error al generar audio: {e}")
+        return b""
 
 # -------------------------
 # Procesamiento del archivo
@@ -156,7 +162,12 @@ if uploaded_file is not None:
 
     # Procesar notebook solo una vez
     if not st.session_state.notebook_cargado:
-        notebook = nbformat.read(uploaded_file, as_version=4)
+        try:
+            notebook = nbformat.read(uploaded_file, as_version=4)
+        except Exception as e:
+            st.error(f"Error al leer el archivo .ipynb: {e}")
+            st.stop()
+
         bloques = []
         with st.spinner("📚 Procesando notebook..."):
             for i, cell in enumerate(notebook.cells, 1):
@@ -178,10 +189,7 @@ if uploaded_file is not None:
 
                 # Generar audios según el tipo
                 if cell_type == "markdown" and tipo == "texto":
-                    try:
-                        audio_bytes = text_to_speech(cell_source)
-                    except Exception:
-                        audio_bytes = b""
+                    audio_bytes = text_to_speech(cell_source)
                     bloque["audios"].append({
                         "descripcion": "Texto",
                         "bytes": audio_bytes,
@@ -190,13 +198,11 @@ if uploaded_file is not None:
 
                 elif cell_type == "markdown" and tipo in ["formula", "tabla"]:
                     explicacion = describir_contenido(tipo, cell_source)
-                    try:
-                        audio_explicacion = text_to_speech(explicacion)
-                    except Exception:
-                        audio_explicacion = b""
+                    audio_explicacion = text_to_speech(explicacion)
 
                     if tipo == "formula":
                         try:
+                            # Intenta la conversión por IA para mayor naturalidad
                             prompt_formula = f"""
 Convierte esta fórmula matemática a lenguaje hablado natural en español. 
 NO uses letras sueltas. Usa frases completas y naturales.
@@ -212,17 +218,15 @@ Fórmula: {cell_source}
                             )
                             contenido_legible = response_formula.choices[0].message.content
                         except Exception:
+                            # Fallback si la IA falla
                             contenido_legible = latex_a_texto_hablado(cell_source)
-                        try:
-                            audio_contenido = text_to_speech(contenido_legible)
-                        except Exception:
-                            audio_contenido = b""
-                    else:
-                        try:
-                            audio_contenido = text_to_speech(cell_source)
-                        except Exception:
-                            audio_contenido = b""
-
+                        
+                        audio_contenido = text_to_speech(contenido_legible)
+                    
+                    elif tipo == "tabla":
+                        # Para las tablas, simplemente lee el contenido después de la explicación
+                        audio_contenido = text_to_speech(cell_source)
+                    
                     bloque["audios"].append({
                         "descripcion": f"Descripción de {tipo}",
                         "texto": explicacion,
@@ -237,10 +241,7 @@ Fórmula: {cell_source}
 
                 elif cell_type == "code":
                     explicacion = describir_contenido("código", cell_source)
-                    try:
-                        audio_explicacion = text_to_speech(explicacion)
-                    except Exception:
-                        audio_explicacion = b""
+                    audio_explicacion = text_to_speech(explicacion)
                     bloque["audios"].append({
                         "descripcion": "Explicación del código",
                         "texto": explicacion,
@@ -266,8 +267,9 @@ Fórmula: {cell_source}
 
         # Validar índice
         if indice >= total_bloques:
-            st.session_state.indice_actual = 0
-            indice = 0
+            st.session_state.indice_actual = total_bloques - 1
+            indice = total_bloques - 1
+            st.session_state.indice_audio_bloque = 0
 
         bloque_actual = st.session_state.bloques_audio[indice]
         total_audios_bloque = len(bloque_actual["audios"])
@@ -287,14 +289,15 @@ Fórmula: {cell_source}
         audio_info = bloque_actual["audios"][indice_audio]
 
         if "texto" in audio_info:
-            st.write(audio_info["texto"])
+            st.info(audio_info["texto"]) # Usar info para destacarlo
 
-        # Revisión segura: si los bytes están vacíos, no fallar
+        # Reproducir audio
         if audio_info.get("bytes"):
             st.audio(audio_info["bytes"], format="audio/mp3", autoplay=True)
         else:
-            st.info("Audio no disponible para este bloque.")
+            st.warning("Audio no disponible para esta parte del bloque.")
 
+        # Mostrar contenido de la celda si corresponde
         if audio_info["mostrar_contenido"]:
             if bloque_actual["tipo_celda"] == "code":
                 st.code(bloque_actual["contenido"], language="python")
@@ -303,17 +306,13 @@ Fórmula: {cell_source}
 
         # Generar audios hover para botones (solo una vez)
         if "hover_audios_generados" not in st.session_state:
-            try:
-                st.session_state.audio_hover_anterior = text_to_speech("Anterior")
-                st.session_state.audio_hover_siguiente = text_to_speech("Siguiente")
-                st.session_state.audio_hover_reiniciar = text_to_speech("Reiniciar")
-            except Exception:
-                st.session_state.audio_hover_anterior = b""
-                st.session_state.audio_hover_siguiente = b""
-                st.session_state.audio_hover_reiniciar = b""
+            st.session_state.audio_hover_anterior = text_to_speech("Anterior")
+            st.session_state.audio_hover_siguiente = text_to_speech("Siguiente")
+            st.session_state.audio_hover_reiniciar = text_to_speech("Reiniciar")
             st.session_state.hover_audios_generados = True
 
         # Insertar audios hover ocultos (si existen)
+        # Esto se mantiene para la potencial mejora de accesibilidad con hover
         audio_anterior_b64 = base64.b64encode(st.session_state.audio_hover_anterior).decode() if st.session_state.audio_hover_anterior else ""
         audio_siguiente_b64 = base64.b64encode(st.session_state.audio_hover_siguiente).decode() if st.session_state.audio_hover_siguiente else ""
         audio_reiniciar_b64 = base64.b64encode(st.session_state.audio_hover_reiniciar).decode() if st.session_state.audio_hover_reiniciar else ""
@@ -341,7 +340,8 @@ Fórmula: {cell_source}
                     st.rerun()
 
         with col2:
-            if st.button("🔄 Reiniciar", use_container_width=True, key=f"btn_reiniciar_{indice}_{indice_audio}"):
+            # Usar una key estable para Reiniciar
+            if st.button("🔄 Reiniciar", use_container_width=True, key="btn_reiniciar_fijo"):
                 st.session_state.indice_audio_bloque = 0
                 st.rerun()
 
@@ -352,130 +352,64 @@ Fórmula: {cell_source}
                     st.rerun()
                 elif st.session_state.indice_actual >= total_bloques - 1:
                     texto_final = "Has llegado al final del documento"
-                    try:
-                        audio_final = text_to_speech(texto_final)
-                        st.audio(audio_final, format="audio/mp3", autoplay=True)
-                    except Exception:
-                        pass
+                    audio_final = text_to_speech(texto_final)
+                    st.audio(audio_final, format="audio/mp3", autoplay=True)
                     st.info("✅ " + texto_final)
                 else:
                     st.session_state.indice_actual += 1
                     st.session_state.indice_audio_bloque = 0
                     st.rerun()
 
-        # -------------------------
-        # Accesibilidad con teclado - versión robusta
-        # -------------------------
-        st.markdown("""
-        <script>
-        (function() {
-            // helper: busca botones por texto en doc y parentDoc
-            function findButtons(doc) {
-                if (!doc) return {};
-                const allButtons = Array.from(doc.querySelectorAll('button'));
-                let btnAnterior = null, btnSiguiente = null, btnReiniciar = null;
-                allButtons.forEach(b => {
-                    const text = (b.textContent || b.innerText || '').trim();
-                    if (!btnAnterior && text.includes('Anterior')) btnAnterior = b;
-                    if (!btnSiguiente && text.includes('Siguiente')) btnSiguiente = b;
-                    if (!btnReiniciar && text.includes('Reiniciar')) btnReiniciar = b;
-                });
-                return { btnAnterior, btnSiguiente, btnReiniciar };
-            }
-
-            // attach key handler to a document if not already attached
-            function attachKeyHandler(doc) {
-                if (!doc || doc.__keyboardHandlerAttached) return;
-                doc.__keyboardHandlerAttached = true;
-
-                doc.addEventListener('keydown', function(event) {
-                    // No interferir si el usuario está escribiendo
-                    const active = doc.activeElement;
-                    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
-                        return;
-                    }
-
-                    // intentamos obtener botones del mismo documento y del parent
-                    const fromDoc = findButtons(doc);
-                    const parentDoc = (window.parent && window.parent.document && window.parent.document !== doc) ? window.parent.document : null;
-                    const fromParent = findButtons(parentDoc);
-
-                    // prefer btns en el mismo doc, si no existen, usar parent
-                    const btnAnterior = fromDoc.btnAnterior || fromParent.btnAnterior;
-                    const btnSiguiente = fromDoc.btnSiguiente || fromParent.btnSiguiente;
-                    const btnReiniciar = fromDoc.btnReiniciar || fromParent.btnReiniciar;
-
-                    try {
-                        if (event.key === 'ArrowLeft' && btnAnterior) {
-                            event.preventDefault();
-                            btnAnterior.click();
-                        } else if (event.key === 'ArrowRight' && btnSiguiente) {
-                            event.preventDefault();
-                            btnSiguiente.click();
-                        } else if ((event.key === 'r' || event.key === 'R') && btnReiniciar) {
-                            event.preventDefault();
-                            btnReiniciar.click();
-                        }
-                    } catch (e) {
-                        console.log('Error al simular click por teclado:', e);
-                    }
-                }, true);
-            }
-
-            // intentar adjuntar al document actual y al parent (si existe)
-            try {
-                attachKeyHandler(document);
-                if (window.parent && window.parent.document && window.parent.document !== document) {
-                    attachKeyHandler(window.parent.document);
-                }
-            } catch(e) {
-                console.log('Error al adjuntar manejadores de teclado:', e);
-            }
-
-            // observer para cuando Streamlit renderice botones después
-            const observerTarget = (document.body) ? document.body : document;
-            const observer = new MutationObserver(function(mutations) {
-                // cada vez que cambie el DOM, intentamos adjuntar (seguro y barato)
-                try {
-                    attachKeyHandler(document);
-                    if (window.parent && window.parent.document && window.parent.document !== document) {
-                        attachKeyHandler(window.parent.document);
-                    }
-                } catch(e) {}
-            });
-            observer.observe(observerTarget, { childList: true, subtree: true, attributes: false });
-
-        })();
-        </script>
-        """, unsafe_allow_html=True)
-
-import streamlit.components.v1 as components
-
-# -------------------------
-# Accesibilidad con teclado (funcional en Streamlit Cloud)
-# -------------------------
+# ----------------------------------------------------
+# CORRECCIÓN DE ACCESIBILIDAD CON TECLADO
+# Se usa components.html con búsqueda robusta por data-testid.
+# ----------------------------------------------------
 components.html("""
 <script>
 document.addEventListener('keydown', function(event) {
-    // Evitar que actúe cuando se escribe en inputs o textareas
+    // 1. Evitar interferencia al escribir
     const active = document.activeElement;
-    if (active && ['INPUT', 'TEXTAREA'].includes(active.tagName)) return;
+    // Si el foco está en un campo de texto, no actuar.
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+        return;
+    }
 
-    const buttons = Array.from(document.querySelectorAll('button'));
+    // 2. Función para buscar botones por la 'data-testid' de Streamlit
+    // Streamlit usa el formato 'st.button-{key}'
+    function findButtonByTestId(key) {
+        const testId = `st.button-${key}`;
+        
+        // Busca en el documento actual
+        let container = document.querySelector(`[data-testid="${testId}"]`);
+        if (container) return container.querySelector('button');
+        
+        // Busca en el documento padre (necesario en algunos entornos de Streamlit)
+        if (window.parent && window.parent.document) {
+            container = window.parent.document.querySelector(`[data-testid="${testId}"]`);
+            if (container) return container.querySelector('button');
+        }
+        return null;
+    }
+    
+    // Las keys de tus botones en Python
+    const ANTERIOR_KEY = 'btn_anterior';
+    const SIGUIENTE_KEY = 'btn_siguiente';
+    const REINICIAR_KEY = 'btn_reiniciar_fijo'; // La key fija que usamos
+    
     let targetButton = null;
 
     if (event.key === 'ArrowLeft') {
-        targetButton = buttons.find(b => b.innerText.includes('Anterior'));
+        targetButton = findButtonByTestId(ANTERIOR_KEY);
     } else if (event.key === 'ArrowRight') {
-        targetButton = buttons.find(b => b.innerText.includes('Siguiente'));
+        targetButton = findButtonByTestId(SIGUIENTE_KEY);
     } else if (event.key.toLowerCase() === 'r') {
-        targetButton = buttons.find(b => b.innerText.includes('Reiniciar'));
+        targetButton = findButtonByTestId(REINICIAR_KEY);
     }
 
     if (targetButton) {
-        event.preventDefault();
+        event.preventDefault(); // Detiene el comportamiento predeterminado (ej. scroll)
         targetButton.click();
     }
-});
+}, true); // El 'true' captura el evento en la fase de captura, asegurando la prioridad.
 </script>
 """, height=0)
