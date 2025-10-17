@@ -448,3 +448,34 @@ Fórmula: {cell_source}
         })();
         </script>
         """, unsafe_allow_html=True)
+
+import streamlit.components.v1 as components
+
+# -------------------------
+# Accesibilidad con teclado (funcional en Streamlit Cloud)
+# -------------------------
+components.html("""
+<script>
+document.addEventListener('keydown', function(event) {
+    // Evitar que actúe cuando se escribe en inputs o textareas
+    const active = document.activeElement;
+    if (active && ['INPUT', 'TEXTAREA'].includes(active.tagName)) return;
+
+    const buttons = Array.from(document.querySelectorAll('button'));
+    let targetButton = null;
+
+    if (event.key === 'ArrowLeft') {
+        targetButton = buttons.find(b => b.innerText.includes('Anterior'));
+    } else if (event.key === 'ArrowRight') {
+        targetButton = buttons.find(b => b.innerText.includes('Siguiente'));
+    } else if (event.key.toLowerCase() === 'r') {
+        targetButton = buttons.find(b => b.innerText.includes('Reiniciar'));
+    }
+
+    if (targetButton) {
+        event.preventDefault();
+        targetButton.click();
+    }
+});
+</script>
+""", height=0)
